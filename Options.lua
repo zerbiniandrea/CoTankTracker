@@ -5,7 +5,7 @@ local LSM = ns.LSM
 -----------------------------------------------------------
 -- Constants
 -----------------------------------------------------------
-local PANEL_WIDTH = 460
+local PANEL_WIDTH = 500
 local PANEL_HEIGHT = 580
 local PADDING = 16
 local COMPONENT_GAP = 6
@@ -156,44 +156,6 @@ local function BuildGeneralTab(parent)
     local scrollFrame, content = CreateScrollContent(parent)
     local y = 0
 
-    -- Frame
-    local _, newY = ns.CreateSectionHeader(content, "Frame", 0, y)
-    y = newY
-
-    local widthSlider = Components.Slider(content, {
-        label = "Width",
-        min = 60,
-        max = 400,
-        step = 5,
-        suffix = "px",
-        get = function()
-            return CoTankTrackerDB.width
-        end,
-        onChange = function(val)
-            CoTankTrackerDB.width = val
-            ns.ApplySettings()
-        end,
-    })
-    widthSlider:SetPoint("TOPLEFT", 0, y)
-    y = y - 20 - COMPONENT_GAP
-
-    local heightSlider = Components.Slider(content, {
-        label = "Height",
-        min = 8,
-        max = 60,
-        step = 1,
-        suffix = "px",
-        get = function()
-            return CoTankTrackerDB.height
-        end,
-        onChange = function(val)
-            CoTankTrackerDB.height = val
-            ns.ApplySettings()
-        end,
-    })
-    heightSlider:SetPoint("TOPLEFT", 0, y)
-    y = y - 20 - SECTION_GAP
-
     -- Name
     local _, newYName = ns.CreateSectionHeader(content, "Name", 0, y)
     y = newYName
@@ -211,6 +173,24 @@ local function BuildGeneralTab(parent)
     })
     showNameCb:SetPoint("TOPLEFT", 0, y)
     y = y - 20 - COMPONENT_GAP
+
+    local fontDd = Components.Dropdown(content, {
+        label = "Font",
+        width = 160,
+        options = GetLSMOptions("font"),
+        get = function()
+            return CoTankTrackerDB.font
+        end,
+        enabled = function()
+            return CoTankTrackerDB.showName
+        end,
+        onChange = function(val)
+            CoTankTrackerDB.font = val
+            ns.ApplySettings()
+        end,
+    })
+    fontDd:SetPoint("TOPLEFT", 0, y)
+    y = y - 26 - COMPONENT_GAP
 
     local fontSizeSlider = Components.Slider(content, {
         label = "Font Size",
@@ -233,57 +213,6 @@ local function BuildGeneralTab(parent)
     fontSizeSlider:SetPoint("TOPLEFT", 0, y)
     y = y - 20 - SECTION_GAP
 
-    -- Appearance
-    local _, newYAppearance = ns.CreateSectionHeader(content, "Appearance", 0, y)
-    y = newYAppearance
-
-    local textureDd = Components.Dropdown(content, {
-        label = "Texture",
-        width = 160,
-        options = GetLSMOptions("statusbar"),
-        get = function()
-            return CoTankTrackerDB.texture
-        end,
-        onChange = function(val)
-            CoTankTrackerDB.texture = val
-            ns.ApplySettings()
-        end,
-    })
-    textureDd:SetPoint("TOPLEFT", 0, y)
-    y = y - 26 - COMPONENT_GAP
-
-    local fontDd = Components.Dropdown(content, {
-        label = "Font",
-        width = 160,
-        options = GetLSMOptions("font"),
-        get = function()
-            return CoTankTrackerDB.font
-        end,
-        onChange = function(val)
-            CoTankTrackerDB.font = val
-            ns.ApplySettings()
-        end,
-    })
-    fontDd:SetPoint("TOPLEFT", 0, y)
-    y = y - 26 - COMPONENT_GAP
-
-    local iconBordersCb = Components.Checkbox(content, {
-        label = "Icon borders",
-        get = function()
-            return CoTankTrackerDB.iconBorders
-        end,
-        tooltip = {
-            title = "Icon Borders",
-            desc = "Show a thin black border around buff, debuff, and private aura icons.",
-        },
-        onChange = function(checked)
-            CoTankTrackerDB.iconBorders = checked
-            ns.ApplySettings()
-        end,
-    })
-    iconBordersCb:SetPoint("TOPLEFT", 0, y)
-    y = y - 20 - SECTION_GAP
-
     -- Behavior
     local _, newYBehavior = ns.CreateSectionHeader(content, "Behavior", 0, y)
     y = newYBehavior
@@ -300,38 +229,7 @@ local function BuildGeneralTab(parent)
         end,
     })
     showInPartyCb:SetPoint("TOPLEFT", 0, y)
-    y = y - 20 - COMPONENT_GAP
-
-    local lockedCb = Components.Checkbox(content, {
-        label = "Lock frame",
-        get = function()
-            return CoTankTrackerDB.locked
-        end,
-        tooltip = { title = "Lock", desc = "When unlocked, drag the frame to reposition it." },
-        onChange = function(checked)
-            CoTankTrackerDB.locked = checked
-        end,
-    })
-    lockedCb:SetPoint("TOPLEFT", 0, y)
     y = y - 20 - SECTION_GAP
-
-    -- Position
-    local _, newYPos = ns.CreateSectionHeader(content, "Position", 0, y)
-    y = newYPos
-
-    local resetPosBtn = ns.CreateButton(content, "Reset Position", function()
-        if InCombatLockdown() then
-            return
-        end
-        local db = CoTankTrackerDB
-        db.point = "CENTER"
-        db.x = 200
-        db.y = 0
-        ns.coTankFrame:ClearAllPoints()
-        ns.coTankFrame:SetPoint(db.point, UIParent, db.point, db.x, db.y)
-    end)
-    resetPosBtn:SetPoint("TOPLEFT", 0, y)
-    y = y - 22 - SECTION_GAP
 
     -- Profiles
     local _, newYProfiles = ns.CreateSectionHeader(content, "Profiles", 0, y)
@@ -376,6 +274,126 @@ local function BuildGeneralTab(parent)
 end
 
 -----------------------------------------------------------
+-- Tab: Frame
+-----------------------------------------------------------
+local function BuildFrameTab(parent)
+    local scrollFrame, content = CreateScrollContent(parent)
+    local y = 0
+
+    -- Size
+    local _, newYSize = ns.CreateSectionHeader(content, "Size", 0, y)
+    y = newYSize
+
+    local widthSlider = Components.Slider(content, {
+        label = "Width",
+        min = 60,
+        max = 400,
+        step = 5,
+        suffix = "px",
+        get = function()
+            return CoTankTrackerDB.width
+        end,
+        onChange = function(val)
+            CoTankTrackerDB.width = val
+            ns.ApplySettings()
+        end,
+    })
+    widthSlider:SetPoint("TOPLEFT", 0, y)
+    y = y - 20 - COMPONENT_GAP
+
+    local heightSlider = Components.Slider(content, {
+        label = "Height",
+        min = 8,
+        max = 60,
+        step = 1,
+        suffix = "px",
+        get = function()
+            return CoTankTrackerDB.height
+        end,
+        onChange = function(val)
+            CoTankTrackerDB.height = val
+            ns.ApplySettings()
+        end,
+    })
+    heightSlider:SetPoint("TOPLEFT", 0, y)
+    y = y - 20 - SECTION_GAP
+
+    -- Health Bar
+    local _, newYBar = ns.CreateSectionHeader(content, "Health Bar", 0, y)
+    y = newYBar
+
+    local textureDd = Components.Dropdown(content, {
+        label = "Texture",
+        width = 160,
+        options = GetLSMOptions("statusbar"),
+        get = function()
+            return CoTankTrackerDB.texture
+        end,
+        onChange = function(val)
+            CoTankTrackerDB.texture = val
+            ns.ApplySettings()
+        end,
+    })
+    textureDd:SetPoint("TOPLEFT", 0, y)
+    y = y - 26 - SECTION_GAP
+
+    -- Icons
+    local _, newYIcons = ns.CreateSectionHeader(content, "Icons", 0, y)
+    y = newYIcons
+
+    local iconBordersCb = Components.Checkbox(content, {
+        label = "Icon borders",
+        get = function()
+            return CoTankTrackerDB.iconBorders
+        end,
+        tooltip = {
+            title = "Icon Borders",
+            desc = "Show a thin black border around buff, debuff, and private aura icons.",
+        },
+        onChange = function(checked)
+            CoTankTrackerDB.iconBorders = checked
+            ns.ApplySettings()
+        end,
+    })
+    iconBordersCb:SetPoint("TOPLEFT", 0, y)
+    y = y - 20 - SECTION_GAP
+
+    -- Position
+    local _, newYPos = ns.CreateSectionHeader(content, "Position", 0, y)
+    y = newYPos
+
+    local lockedCb = Components.Checkbox(content, {
+        label = "Lock frame",
+        get = function()
+            return CoTankTrackerDB.locked
+        end,
+        tooltip = { title = "Lock", desc = "When unlocked, drag the frame to reposition it." },
+        onChange = function(checked)
+            CoTankTrackerDB.locked = checked
+        end,
+    })
+    lockedCb:SetPoint("TOPLEFT", 0, y)
+    y = y - 20 - COMPONENT_GAP
+
+    local resetPosBtn = ns.CreateButton(content, "Reset Position", function()
+        if InCombatLockdown() then
+            return
+        end
+        local db = CoTankTrackerDB
+        db.point = "CENTER"
+        db.x = 200
+        db.y = 0
+        ns.coTankFrame:ClearAllPoints()
+        ns.coTankFrame:SetPoint(db.point, UIParent, db.point, db.x, db.y)
+    end)
+    resetPosBtn:SetPoint("TOPLEFT", 0, y)
+    y = y - 22
+
+    content:SetHeight(math.abs(y) + 20)
+    return scrollFrame
+end
+
+-----------------------------------------------------------
 -- Tab: Debuffs
 -----------------------------------------------------------
 local function BuildDebuffsTab(parent)
@@ -399,9 +417,9 @@ local function BuildDebuffsTab(parent)
     showDebuffsCb:SetPoint("TOPLEFT", 0, y)
     y = y - 20 - SECTION_GAP
 
-    -- Layout
-    local _, newYLayout = ns.CreateSectionHeader(content, "Layout", 0, y)
-    y = newYLayout
+    -- Icons
+    local _, newYIcons = ns.CreateSectionHeader(content, "Icons", 0, y)
+    y = newYIcons
 
     local debuffSizeSlider = Components.Slider(content, {
         label = "Size",
@@ -472,6 +490,24 @@ local function BuildDebuffsTab(parent)
         end,
     })
     debuffSpacingSlider:SetPoint("TOPLEFT", 0, y)
+    y = y - 20 - COMPONENT_GAP
+
+    local debuffTypeCb = Components.Checkbox(content, {
+        label = "Color border by debuff type",
+        get = function()
+            return CoTankTrackerDB.debuffShowType
+        end,
+        enabled = enabled,
+        tooltip = {
+            title = "Debuff Type",
+            desc = "Colors the debuff border by dispel type (Magic, Curse, Poison, Disease).",
+        },
+        onChange = function(checked)
+            CoTankTrackerDB.debuffShowType = checked
+            ns.ApplySettings()
+        end,
+    })
+    debuffTypeCb:SetPoint("TOPLEFT", 0, y)
     y = y - 20 - SECTION_GAP
 
     -- Text
@@ -513,28 +549,42 @@ local function BuildDebuffsTab(parent)
         end,
     })
     debuffStackSizeSlider:SetPoint("TOPLEFT", 0, y)
-    y = y - 20 - SECTION_GAP
+    y = y - 20 - COMPONENT_GAP
 
-    -- Display
-    local _, newYDisplay = ns.CreateSectionHeader(content, "Display", 0, y)
-    y = newYDisplay
-
-    local debuffTypeCb = Components.Checkbox(content, {
-        label = "Color border by debuff type",
+    local debuffStackOffXSlider = Components.Slider(content, {
+        label = "Stack X",
+        min = -20,
+        max = 20,
+        step = 1,
+        suffix = "px",
         get = function()
-            return CoTankTrackerDB.debuffShowType
+            return CoTankTrackerDB.debuffStackOffsetX
         end,
         enabled = enabled,
-        tooltip = {
-            title = "Debuff Type",
-            desc = "Colors the debuff border by dispel type (Magic, Curse, Poison, Disease).",
-        },
-        onChange = function(checked)
-            CoTankTrackerDB.debuffShowType = checked
+        onChange = function(val)
+            CoTankTrackerDB.debuffStackOffsetX = val
             ns.ApplySettings()
         end,
     })
-    debuffTypeCb:SetPoint("TOPLEFT", 0, y)
+    debuffStackOffXSlider:SetPoint("TOPLEFT", 0, y)
+    y = y - 20 - COMPONENT_GAP
+
+    local debuffStackOffYSlider = Components.Slider(content, {
+        label = "Stack Y",
+        min = -20,
+        max = 20,
+        step = 1,
+        suffix = "px",
+        get = function()
+            return CoTankTrackerDB.debuffStackOffsetY
+        end,
+        enabled = enabled,
+        onChange = function(val)
+            CoTankTrackerDB.debuffStackOffsetY = val
+            ns.ApplySettings()
+        end,
+    })
+    debuffStackOffYSlider:SetPoint("TOPLEFT", 0, y)
     y = y - 20 - SECTION_GAP
 
     -- Filtering
@@ -642,42 +692,6 @@ local function BuildDebuffsTab(parent)
         end,
     })
     debuffOffYSlider:SetPoint("TOPLEFT", 0, y)
-    y = y - 20 - COMPONENT_GAP
-
-    local debuffStackOffXSlider = Components.Slider(content, {
-        label = "Stack X",
-        min = -20,
-        max = 20,
-        step = 1,
-        suffix = "px",
-        get = function()
-            return CoTankTrackerDB.debuffStackOffsetX
-        end,
-        enabled = enabled,
-        onChange = function(val)
-            CoTankTrackerDB.debuffStackOffsetX = val
-            ns.ApplySettings()
-        end,
-    })
-    debuffStackOffXSlider:SetPoint("TOPLEFT", 0, y)
-    y = y - 20 - COMPONENT_GAP
-
-    local debuffStackOffYSlider = Components.Slider(content, {
-        label = "Stack Y",
-        min = -20,
-        max = 20,
-        step = 1,
-        suffix = "px",
-        get = function()
-            return CoTankTrackerDB.debuffStackOffsetY
-        end,
-        enabled = enabled,
-        onChange = function(val)
-            CoTankTrackerDB.debuffStackOffsetY = val
-            ns.ApplySettings()
-        end,
-    })
-    debuffStackOffYSlider:SetPoint("TOPLEFT", 0, y)
     y = y - 20
 
     content:SetHeight(math.abs(y) + 20)
@@ -715,9 +729,9 @@ local function BuildPrivateAurasTab(parent)
     showPACb:SetPoint("TOPLEFT", 0, y)
     y = y - 20 - SECTION_GAP
 
-    -- Layout
-    local _, newYLayout = ns.CreateSectionHeader(content, "Layout", 0, y)
-    y = newYLayout
+    -- Icons
+    local _, newYIcons = ns.CreateSectionHeader(content, "Icons", 0, y)
+    y = newYIcons
 
     local paSizeSlider = Components.Slider(content, {
         label = "Size",
@@ -842,6 +856,32 @@ local function BuildPrivateAurasTab(parent)
         end,
     })
     paCooldownTextCb:SetPoint("TOPLEFT", 0, y)
+    y = y - 20 - COMPONENT_GAP
+
+    local paCooldownTextScaleSlider = Components.Slider(content, {
+        label = "Text Scale",
+        min = 50,
+        max = 300,
+        step = 5,
+        suffix = "%",
+        get = function()
+            return CoTankTrackerDB.paCooldownTextScale
+        end,
+        enabled = function()
+            return CoTankTrackerDB.showPrivateAuras
+                and CoTankTrackerDB.paShowCooldown
+                and CoTankTrackerDB.paShowCooldownText
+        end,
+        tooltip = {
+            title = "Cooldown Text Scale",
+            desc = "Scale the cooldown text on private aura icons. Values above 1 make the text larger, below 1 make it smaller.",
+        },
+        onChange = function(val)
+            CoTankTrackerDB.paCooldownTextScale = val
+            ns.ApplySettings()
+        end,
+    })
+    paCooldownTextScaleSlider:SetPoint("TOPLEFT", 0, y)
     y = y - 20 - SECTION_GAP
 
     -- Positioning
@@ -971,9 +1011,9 @@ local function BuildDefensivesTab(parent)
     showDefCb:SetPoint("TOPLEFT", 0, y)
     y = y - 20 - SECTION_GAP
 
-    -- Layout
-    local _, newYLayout = ns.CreateSectionHeader(content, "Layout", 0, y)
-    y = newYLayout
+    -- Icons
+    local _, newYIcons = ns.CreateSectionHeader(content, "Icons", 0, y)
+    y = newYIcons
 
     local defSizeSlider = Components.Slider(content, {
         label = "Size",
@@ -1084,6 +1124,42 @@ local function BuildDefensivesTab(parent)
         end,
     })
     defStackSizeSlider:SetPoint("TOPLEFT", 0, y)
+    y = y - 20 - COMPONENT_GAP
+
+    local defStackOffXSlider = Components.Slider(content, {
+        label = "Stack X",
+        min = -20,
+        max = 20,
+        step = 1,
+        suffix = "px",
+        get = function()
+            return CoTankTrackerDB.defStackOffsetX
+        end,
+        enabled = enabled,
+        onChange = function(val)
+            CoTankTrackerDB.defStackOffsetX = val
+            ns.ApplySettings()
+        end,
+    })
+    defStackOffXSlider:SetPoint("TOPLEFT", 0, y)
+    y = y - 20 - COMPONENT_GAP
+
+    local defStackOffYSlider = Components.Slider(content, {
+        label = "Stack Y",
+        min = -20,
+        max = 20,
+        step = 1,
+        suffix = "px",
+        get = function()
+            return CoTankTrackerDB.defStackOffsetY
+        end,
+        enabled = enabled,
+        onChange = function(val)
+            CoTankTrackerDB.defStackOffsetY = val
+            ns.ApplySettings()
+        end,
+    })
+    defStackOffYSlider:SetPoint("TOPLEFT", 0, y)
     y = y - 20 - SECTION_GAP
 
     -- Positioning
@@ -1156,42 +1232,6 @@ local function BuildDefensivesTab(parent)
         end,
     })
     defOffYSlider:SetPoint("TOPLEFT", 0, y)
-    y = y - 20 - COMPONENT_GAP
-
-    local defStackOffXSlider = Components.Slider(content, {
-        label = "Stack X",
-        min = -20,
-        max = 20,
-        step = 1,
-        suffix = "px",
-        get = function()
-            return CoTankTrackerDB.defStackOffsetX
-        end,
-        enabled = enabled,
-        onChange = function(val)
-            CoTankTrackerDB.defStackOffsetX = val
-            ns.ApplySettings()
-        end,
-    })
-    defStackOffXSlider:SetPoint("TOPLEFT", 0, y)
-    y = y - 20 - COMPONENT_GAP
-
-    local defStackOffYSlider = Components.Slider(content, {
-        label = "Stack Y",
-        min = -20,
-        max = 20,
-        step = 1,
-        suffix = "px",
-        get = function()
-            return CoTankTrackerDB.defStackOffsetY
-        end,
-        enabled = enabled,
-        onChange = function(val)
-            CoTankTrackerDB.defStackOffsetY = val
-            ns.ApplySettings()
-        end,
-    })
-    defStackOffYSlider:SetPoint("TOPLEFT", 0, y)
     y = y - 20
 
     content:SetHeight(math.abs(y) + 20)
@@ -1228,9 +1268,10 @@ local function CreateOptionsPanel()
     tabBar:SetHeight(TAB_HEIGHT)
 
     CreateTab(tabBar, "general", "General", 0)
-    CreateTab(tabBar, "debuffs", "Debuffs", 92)
-    CreateTab(tabBar, "privateauras", "Priv. Auras", 184)
-    CreateTab(tabBar, "defensives", "Defensives", 276)
+    CreateTab(tabBar, "frame", "Frame", 94)
+    CreateTab(tabBar, "privateauras", "Priv. Auras", 188)
+    CreateTab(tabBar, "debuffs", "Debuffs", 282)
+    CreateTab(tabBar, "defensives", "Defensives", 376)
 
     -- Separator under tabs
     local sep = panel:CreateTexture(nil, "ARTWORK")
@@ -1246,8 +1287,9 @@ local function CreateOptionsPanel()
 
     -- Build tab contents
     tabContents["general"] = BuildGeneralTab(contentArea)
-    tabContents["debuffs"] = BuildDebuffsTab(contentArea)
+    tabContents["frame"] = BuildFrameTab(contentArea)
     tabContents["privateauras"] = BuildPrivateAurasTab(contentArea)
+    tabContents["debuffs"] = BuildDebuffsTab(contentArea)
     tabContents["defensives"] = BuildDefensivesTab(contentArea)
 
     -- Default tab

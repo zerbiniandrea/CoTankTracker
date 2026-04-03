@@ -45,6 +45,7 @@ local DEFAULTS = {
     paShowBorder = false,
     paShowCooldown = true,
     paShowCooldownText = true,
+    paCooldownTextScale = 100,
     paAttachElement = "frame", -- "frame" or "debuffs"
     paAnchor = "BOTTOMLEFT",
     paAttachTo = "TOPLEFT",
@@ -60,7 +61,7 @@ local DEFAULTS = {
     defAttachTo = "BOTTOMLEFT",
     defOffsetX = 0,
     defOffsetY = -2,
-    defCountdownSize = 11,
+    defCountdownSize = 13,
     defStackSize = 11,
     defStackOffsetX = -1,
     defStackOffsetY = 1,
@@ -414,8 +415,9 @@ local function UpdatePrivateAuraAnchors(unitToken)
     end
 
     currentPAUnit = unitToken
-    local size = db.paSize
-    local spacing = db.paSpacing
+    local scale = math.max((db.paCooldownTextScale or 100) / 100, 0.01)
+    local size = db.paSize * (1 / scale)
+    local spacing = db.paSpacing * (1 / scale)
     local perRow = db.paMaxIcons
     local maxRows = db.paMaxRows
     local totalIcons = perRow * maxRows
@@ -437,9 +439,16 @@ local function UpdatePrivateAuraAnchors(unitToken)
         end
 
         anchor:SetSize(size, size)
+        anchor:SetScale(scale)
         local col = (i - 1) % perRow
         if i == 1 then
-            anchor:SetPoint(db.paAnchor, GetPARelativeFrame(), db.paAttachTo, db.paOffsetX, db.paOffsetY)
+            anchor:SetPoint(
+                db.paAnchor,
+                GetPARelativeFrame(),
+                db.paAttachTo,
+                db.paOffsetX / scale,
+                db.paOffsetY / scale
+            )
         elseif col == 0 then
             -- First icon of a new row: anchor relative to the first icon of the previous row
             local rowStart = privateAuraAnchors[i - perRow]
@@ -591,6 +600,9 @@ function ns.ApplySettings()
                     btn.Count:ClearAllPoints()
                     btn.Count:SetPoint("BOTTOMRIGHT", db.defStackOffsetX, db.defStackOffsetY)
                 end
+                if btn.Duration then
+                    btn.Duration:SetFont(STANDARD_TEXT_FONT, db.defCountdownSize, "OUTLINE")
+                end
                 if btn.IconBorder_ then
                     btn.IconBorder_:SetShown(db.iconBorders)
                 end
@@ -624,6 +636,9 @@ function ns.ApplySettings()
                     btn.Count:SetFont(STANDARD_TEXT_FONT, db.debuffStackSize, "OUTLINE")
                     btn.Count:ClearAllPoints()
                     btn.Count:SetPoint("BOTTOMRIGHT", db.debuffStackOffsetX, db.debuffStackOffsetY)
+                end
+                if btn.Duration then
+                    btn.Duration:SetFont(STANDARD_TEXT_FONT, db.debuffCountdownSize, "OUTLINE")
                 end
                 if btn.IconBorder_ then
                     btn.IconBorder_:SetShown(db.iconBorders)
@@ -823,6 +838,7 @@ function ns.UpdateMockAuras()
         mockPAContainer:SetFrameLevel(1000)
     end
 
+    local paScale = math.max((db.paCooldownTextScale or 100) / 100, 0.01)
     local paSize = db.paSize
     local paSpacing = db.paSpacing
     local paTotalWidth = paPerRow * (paSize + paSpacing)
@@ -846,7 +862,9 @@ function ns.UpdateMockAuras()
         end
         local btn = mockPAButtons[i]
         btn.Icon:SetTexture(MOCK_PA_ICONS[((i - 1) % #MOCK_PA_ICONS) + 1])
-        btn:SetSize(paSize, paSize)
+        local scaledPASize = paSize * (1 / paScale)
+        btn:SetSize(scaledPASize, scaledPASize)
+        btn:SetScale(paScale)
         if color then
             btn.Border:SetVertexColor(color[1], color[2], color[3])
             btn.Border:Show()
@@ -855,8 +873,10 @@ function ns.UpdateMockAuras()
         end
         local dur = MOCK_PA_DURATIONS[((i - 1) % #MOCK_PA_DURATIONS) + 1]
         if btn.Duration then
+            btn.Duration:SetFont(STANDARD_TEXT_FONT, db.debuffCountdownSize, "OUTLINE")
             btn.Duration:SetText(dur)
         end
+        btn.Count:SetFont(STANDARD_TEXT_FONT, db.debuffStackSize, "OUTLINE")
         btn.Count:SetText(MOCK_PA_STACKS[((i - 1) % #MOCK_PA_STACKS) + 1])
         if dur ~= "" and btn.Cooldown then
             btn.Cooldown:SetCooldown(GetTime() - 4, 12)
@@ -865,15 +885,28 @@ function ns.UpdateMockAuras()
             btn.Cooldown:Hide()
         end
         btn:ClearAllPoints()
+        local scaledPASpacing = paSpacing * (1 / paScale)
         local paCol = (i - 1) % paPerRow
         if i == 1 then
             btn:SetPoint(db.paAnchor, mockPAContainer, db.paAnchor, 0, 0)
         elseif paCol == 0 then
             local rowStart = mockPAButtons[i - paPerRow]
-            btn:SetPoint(vGrowth.point, rowStart, vGrowth.relPoint, paSpacing * vGrowth.xMul, paSpacing * vGrowth.yMul)
+            btn:SetPoint(
+                vGrowth.point,
+                rowStart,
+                vGrowth.relPoint,
+                scaledPASpacing * vGrowth.xMul,
+                scaledPASpacing * vGrowth.yMul
+            )
         else
             local prev = mockPAButtons[i - 1]
-            btn:SetPoint(hGrowth.point, prev, hGrowth.relPoint, paSpacing * hGrowth.xMul, paSpacing * hGrowth.yMul)
+            btn:SetPoint(
+                hGrowth.point,
+                prev,
+                hGrowth.relPoint,
+                scaledPASpacing * hGrowth.xMul,
+                scaledPASpacing * hGrowth.yMul
+            )
         end
         if btn.IconBorder_ then
             btn.IconBorder_:SetShown(db.iconBorders)
@@ -914,8 +947,10 @@ function ns.UpdateMockAuras()
         btn.Icon:SetTexture(MOCK_DEFENSIVE_ICONS[((i - 1) % #MOCK_DEFENSIVE_ICONS) + 1])
         btn:SetSize(defSize, defSize)
         btn.Border:Hide()
+        btn.Count:SetFont(STANDARD_TEXT_FONT, db.defStackSize, "OUTLINE")
         btn.Count:SetText(MOCK_DEF_STACKS[((i - 1) % #MOCK_DEF_STACKS) + 1])
         local dur = MOCK_DEF_DURATIONS[((i - 1) % #MOCK_DEF_DURATIONS) + 1]
+        btn.Duration:SetFont(STANDARD_TEXT_FONT, db.defCountdownSize, "OUTLINE")
         btn.Duration:SetText(dur)
         if dur ~= "" and btn.Cooldown then
             btn.Cooldown:SetCooldown(GetTime() - 3, 10)
@@ -1020,30 +1055,9 @@ end
 -----------------------------------------------------------
 SLASH_COTANKTRACKER1 = "/cotanktracker"
 SLASH_COTANKTRACKER2 = "/ctt"
-SlashCmdList["COTANKTRACKER"] = function(msg)
-    msg = msg:trim():lower()
-
-    if msg == "" then
-        if ns.ToggleOptions then
-            ns.ToggleOptions()
-        end
-    elseif msg == "test" then
-        ns.EnterTestMode()
-    elseif msg == "hide" then
-        ns.ExitTestMode()
-    elseif msg == "reset" then
-        if InCombatLockdown() then
-            print("|cff00ccffCoTankTracker:|r Cannot reset in combat.")
-            return
-        end
-        local db = CoTankTrackerDB
-        db.point = DEFAULTS.point
-        db.x = DEFAULTS.x
-        db.y = DEFAULTS.y
-        ns.coTankFrame:ClearAllPoints()
-        ns.coTankFrame:SetPoint(db.point, UIParent, db.point, db.x, db.y)
-    else
-        print("|cff00ccffCoTankTracker:|r Commands: (no args = options) | test | hide | reset")
+SlashCmdList["COTANKTRACKER"] = function()
+    if ns.ToggleOptions then
+        ns.ToggleOptions()
     end
 end
 

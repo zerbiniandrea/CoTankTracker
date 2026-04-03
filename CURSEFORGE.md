@@ -32,7 +32,3 @@ Two built-in profiles are available from the options panel. Switch between them 
 ## Configuration
 
 Type `/ctt` to open the options panel.
-
-- `/ctt test` — Show the frame with your character as the unit (preview mode)
-- `/ctt hide` — Exit test mode
-- `/ctt reset` — Reset frame position to center
