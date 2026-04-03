@@ -1,0 +1,18 @@
+## Interface: 120001
+## Title: CoTankTracker
+## Notes: Minimal oUF co-tank unit frame — shows the other tank in your raid
+## Author: zerbi
+## Version: @project-version@
+## SavedVariables: CoTankTrackerDB
+## IconTexture: Interface\AddOns\CoTankTracker\icon.tga
+## X-oUF: CoTankTracker
+## X-Curse-Project-ID: 1503234
+## Category: Unit Frames
+
+libs/LibStub/LibStub.lua
+libs/CallbackHandler-1.0/CallbackHandler-1.0.lua
+libs/LibSharedMedia-3.0/LibSharedMedia-3.0.lua
+libs/oUF/oUF.xml
+Components.lua
+CoTankTracker.lua
+Options.lua

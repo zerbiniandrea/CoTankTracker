@@ -1,0 +1,11 @@
+ignore:
+  - assets
+  - .github
+  - .gitignore
+  - .luacheckrc
+  - .luarc.json
+  - .styluaignore
+  - stylua.toml
+  - Makefile
+  - README.md
+  - CURSEFORGE.md
