@@ -1,3 +1,15 @@
+package-as: CoTankTracker
+
+enable-nolib-creation: no
+
+externals:
+  libs/oUF:
+    url: https://github.com/oUF-wow/oUF.git
+    tag: latest
+
+tools-used:
+  - ouf
+
 ignore:
   - assets
   - .github
