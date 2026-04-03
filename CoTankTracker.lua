@@ -20,7 +20,7 @@ local DEFAULTS = {
     font = "Friz Quadrata TT",
     iconBorders = true,
     -- Debuffs
-    showDebuffs = true,
+    showDebuffs = false,
     debuffSize = 32,
     debuffNum = 2,
     debuffMaxRows = 2,
@@ -38,21 +38,21 @@ local DEFAULTS = {
     debuffStackOffsetY = 1,
     -- Private Auras
     showPrivateAuras = true,
-    paSize = 32,
-    paMaxIcons = 2,
-    paMaxRows = 2,
+    paSize = 36,
+    paMaxIcons = 4,
+    paMaxRows = 1,
     paSpacing = 2,
     paShowBorder = false,
     paShowCooldown = true,
     paShowCooldownText = true,
     paAttachElement = "frame", -- "frame" or "debuffs"
-    paAnchor = "BOTTOMRIGHT",
-    paAttachTo = "TOPRIGHT",
+    paAnchor = "BOTTOMLEFT",
+    paAttachTo = "TOPLEFT",
     paOffsetX = 0,
     paOffsetY = 2,
     -- Defensives
     showDefensives = true,
-    defSize = 32,
+    defSize = 36,
     defMaxIcons = 4,
     defMaxRows = 1,
     defSpacing = 2,
@@ -66,6 +66,54 @@ local DEFAULTS = {
     defStackOffsetY = 1,
 }
 ns.DEFAULTS = DEFAULTS
+
+-----------------------------------------------------------
+-- Profiles (pre-configured layouts)
+-----------------------------------------------------------
+local PROFILES = {
+    {
+        name = "Private Auras Only",
+        settings = {
+            showDebuffs = false,
+            showDefensives = true,
+            showPrivateAuras = true,
+            paSize = 36,
+            paMaxIcons = 4,
+            paMaxRows = 1,
+            paAnchor = "BOTTOMLEFT",
+            paAttachTo = "TOPLEFT",
+            paOffsetX = 0,
+            paOffsetY = 2,
+        },
+    },
+    {
+        name = "Full",
+        settings = {
+            showDebuffs = true,
+            showDefensives = true,
+            showPrivateAuras = true,
+            paSize = 32,
+            paMaxIcons = 2,
+            paMaxRows = 2,
+            paAnchor = "BOTTOMRIGHT",
+            paAttachTo = "TOPRIGHT",
+            paOffsetX = 0,
+            paOffsetY = 2,
+        },
+    },
+}
+ns.PROFILES = PROFILES
+
+function ns.ApplyProfile(index)
+    local profile = PROFILES[index]
+    if not profile then
+        return
+    end
+    for k, v in pairs(profile.settings) do
+        CoTankTrackerDB[k] = v
+    end
+    ns.ApplySettings()
+end
 
 -- Mock aura textures (common tank-relevant spells)
 local MOCK_DEBUFF_ICONS = {
@@ -613,12 +661,14 @@ local MOCK_PA_ICONS = {
     237274, -- Incendiary Brand (tank debuff)
     135945, -- Rend / bleed
     136124, -- Shadow Bolt (magic)
+    132365, -- Holy Shield
 }
 -- Dispel-type border colors for mock PA icons
 local PA_BORDER_COLORS = {
     { 0.2, 0.6, 1 }, -- magic
     { 0.8, 0.2, 0.2 }, -- none / physical
     { 0.6, 0, 1 }, -- curse
+    { 1, 0.82, 0 }, -- holy
 }
 
 local function CreateMockButton(parent, size, icon, debuffColor)

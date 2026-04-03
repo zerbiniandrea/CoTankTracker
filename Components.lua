@@ -679,6 +679,7 @@ local function CreateDropdownCore(parent, width, options, initialValue, onChange
 
     local currentValue = initialValue
     local currentLabel = ""
+    local placeholder = options.placeholder
     for _, opt in ipairs(options) do
         if opt.value == currentValue then
             currentLabel = opt.label
@@ -702,7 +703,11 @@ local function CreateDropdownCore(parent, width, options, initialValue, onChange
     buttonText:SetPoint("LEFT", 8, 0)
     buttonText:SetPoint("RIGHT", -20, 0)
     buttonText:SetJustifyH("LEFT")
-    buttonText:SetText(currentLabel)
+    if currentLabel ~= "" then
+        buttonText:SetText(currentLabel)
+    elseif placeholder then
+        buttonText:SetText("|cff999999" .. placeholder .. "|r")
+    end
 
     local arrow = button:CreateTexture(nil, "OVERLAY")
     arrow:SetSize(12, 12)

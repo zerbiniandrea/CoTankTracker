@@ -333,6 +333,30 @@ local function BuildGeneralTab(parent)
     resetPosBtn:SetPoint("TOPLEFT", 0, y)
     y = y - 22 - SECTION_GAP
 
+    -- Profiles
+    local _, newYProfiles = ns.CreateSectionHeader(content, "Profiles", 0, y)
+    y = newYProfiles
+
+    local profileOptions = { placeholder = "Select a profile" }
+    for i, profile in ipairs(ns.PROFILES) do
+        profileOptions[#profileOptions + 1] = { label = profile.name, value = i }
+    end
+    local profileDropdown = Components.Dropdown(content, {
+        label = "Profile",
+        labelWidth = 50,
+        width = 150,
+        options = profileOptions,
+        onChange = function(value)
+            ns.ApplyProfile(value)
+            Components.RefreshAll()
+            if ns.mockVisible then
+                ns.UpdateMockAuras()
+            end
+        end,
+    })
+    profileDropdown:SetPoint("TOPLEFT", 0, y)
+    y = y - 26 - SECTION_GAP
+
     -- Danger Zone
     local _, newYDanger = ns.CreateSectionHeader(content, "Danger Zone", 0, y)
     y = newYDanger
