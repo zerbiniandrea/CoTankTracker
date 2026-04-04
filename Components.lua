@@ -158,8 +158,11 @@ end
 -- BUTTON
 -- ============================================================================
 
-function ns.CreateButton(parent, text, onClick)
-    local colors = ButtonColors
+function ns.CreateButton(parent, text, onClick, tooltip, colorOverrides)
+    local colors = {}
+    for k, v in pairs(ButtonColors) do
+        colors[k] = (colorOverrides and colorOverrides[k]) or v
+    end
 
     local btn = CreateFrame("Button", nil, parent, "BackdropTemplate")
     btn:SetBackdrop({
@@ -205,11 +208,17 @@ function ns.CreateButton(parent, text, onClick)
     btn:SetScript("OnEnter", function()
         isHovered = true
         UpdateVisual()
+        if tooltip then
+            ShowTooltip(btn, tooltip.title, tooltip.desc, "ANCHOR_TOP")
+        end
     end)
     btn:SetScript("OnLeave", function()
         isHovered = false
         isPressed = false
         UpdateVisual()
+        if tooltip then
+            HideTooltip()
+        end
     end)
     btn:SetScript("OnMouseDown", function()
         if isEnabled then
@@ -226,6 +235,12 @@ function ns.CreateButton(parent, text, onClick)
             onClick(btn)
         end
     end)
+
+    function btn:SetText(newText)
+        btnText:SetText(newText)
+        local w = btnText:GetStringWidth()
+        self:SetSize(max(w + 16, 60), 22)
+    end
 
     function btn:SetEnabled(enabled)
         isEnabled = enabled
@@ -286,6 +301,21 @@ end
 -- SLIDER
 -- ============================================================================
 
+---@class SliderConfig
+---@field label? string
+---@field min number
+---@field max number
+---@field step? number
+---@field value? number
+---@field get? fun(): number
+---@field enabled? fun(): boolean
+---@field suffix? string
+---@field onChange fun(val: number)
+---@field labelWidth? number
+---@field sliderWidth? number
+
+---@param parent any
+---@param config SliderConfig
 function Components.Slider(parent, config)
     local colors = SliderColors
     local labelWidth = config.labelWidth or (config.label and 70 or 0)

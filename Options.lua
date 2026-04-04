@@ -255,6 +255,45 @@ local function BuildGeneralTab(parent)
     profileDropdown:SetPoint("TOPLEFT", 0, y)
     y = y - 26 - SECTION_GAP
 
+    -- Position
+    local _, newYPos = ns.CreateSectionHeader(content, "Position", 0, y)
+    y = newYPos
+
+    local btnHolder = CreateFrame("Frame", nil, content)
+    btnHolder:SetSize(PANEL_WIDTH - PADDING * 2, 22)
+    btnHolder:SetPoint("TOPLEFT", 0, y)
+
+    local lockBtn = ns.CreateButton(btnHolder, "Unlock", function()
+        CoTankTrackerDB.locked = not CoTankTrackerDB.locked
+        Components.RefreshAll()
+    end, { title = "Lock / Unlock", desc = "When unlocked, drag the frame to reposition it." }, {
+        border = { 0.7, 0.58, 0, 1 },
+        borderHover = { 1, 0.82, 0, 1 },
+        text = { 1, 0.82, 0, 1 },
+    })
+    lockBtn:SetSize(80, 22)
+    lockBtn:SetPoint("LEFT", 0, 0)
+
+    function lockBtn:Refresh()
+        self:SetText(CoTankTrackerDB.locked and "Unlock" or "Lock")
+    end
+    lockBtn:Refresh()
+    table.insert(ns.RefreshableComponents, lockBtn)
+
+    local resetPosBtn = ns.CreateButton(btnHolder, "Reset Position", function()
+        if InCombatLockdown() then
+            return
+        end
+        local db = CoTankTrackerDB
+        db.point = "CENTER"
+        db.x = 200
+        db.y = 0
+        ns.coTankFrame:ClearAllPoints()
+        ns.coTankFrame:SetPoint(db.point, UIParent, db.point, db.x, db.y)
+    end)
+    resetPosBtn:SetPoint("LEFT", lockBtn, "RIGHT", 8, 0)
+    y = y - 22 - SECTION_GAP
+
     -- Danger Zone
     local _, newYDanger = ns.CreateSectionHeader(content, "Danger Zone", 0, y)
     y = newYDanger
@@ -356,38 +395,7 @@ local function BuildFrameTab(parent)
         end,
     })
     iconBordersCb:SetPoint("TOPLEFT", 0, y)
-    y = y - 20 - SECTION_GAP
-
-    -- Position
-    local _, newYPos = ns.CreateSectionHeader(content, "Position", 0, y)
-    y = newYPos
-
-    local lockedCb = Components.Checkbox(content, {
-        label = "Lock frame",
-        get = function()
-            return CoTankTrackerDB.locked
-        end,
-        tooltip = { title = "Lock", desc = "When unlocked, drag the frame to reposition it." },
-        onChange = function(checked)
-            CoTankTrackerDB.locked = checked
-        end,
-    })
-    lockedCb:SetPoint("TOPLEFT", 0, y)
-    y = y - 20 - COMPONENT_GAP
-
-    local resetPosBtn = ns.CreateButton(content, "Reset Position", function()
-        if InCombatLockdown() then
-            return
-        end
-        local db = CoTankTrackerDB
-        db.point = "CENTER"
-        db.x = 200
-        db.y = 0
-        ns.coTankFrame:ClearAllPoints()
-        ns.coTankFrame:SetPoint(db.point, UIParent, db.point, db.x, db.y)
-    end)
-    resetPosBtn:SetPoint("TOPLEFT", 0, y)
-    y = y - 22
+    y = y - 20
 
     content:SetHeight(math.abs(y) + 20)
     return scrollFrame
