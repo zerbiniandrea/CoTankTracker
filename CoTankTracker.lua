@@ -142,22 +142,57 @@ local DEBUFF_TYPE_COLORS = {
 }
 
 -----------------------------------------------------------
+-- Cached state (event-driven invalidation)
+-----------------------------------------------------------
+local cachedInCombat = false
+local cachedIsTank = nil -- nil = not yet known
+local cachedInRaid = nil
+local cachedInGroup = nil
+local cachedGroupSize = nil
+
+local function InvalidateCombatCache()
+    cachedInCombat = InCombatLockdown()
+end
+
+local function InvalidateTankCache()
+    cachedIsTank = nil
+end
+
+local function InvalidateGroupCache()
+    cachedInRaid = nil
+    cachedInGroup = nil
+    cachedGroupSize = nil
+end
+
+local function IsCombatLocked()
+    return cachedInCombat
+end
+
+-----------------------------------------------------------
 -- Tank detection
 -----------------------------------------------------------
 local function IsPlayerTankSpec()
-    if PlayerUtil and PlayerUtil.IsPlayerEffectivelyTank then
-        return PlayerUtil.IsPlayerEffectivelyTank()
+    if cachedIsTank ~= nil then
+        return cachedIsTank
     end
-    return UnitGroupRolesAssigned("player") == "TANK"
+    if PlayerUtil and PlayerUtil.IsPlayerEffectivelyTank then
+        cachedIsTank = PlayerUtil.IsPlayerEffectivelyTank()
+    else
+        cachedIsTank = UnitGroupRolesAssigned("player") == "TANK"
+    end
+    return cachedIsTank
 end
 
 local function FindOtherTank()
-    local inRaid = IsInRaid()
-    local inParty = not inRaid and IsInGroup()
+    if cachedInRaid == nil then
+        cachedInRaid = IsInRaid()
+        cachedInGroup = not cachedInRaid and IsInGroup()
+        cachedGroupSize = GetNumGroupMembers()
+    end
     local db = CoTankTrackerDB
 
-    if inRaid then
-        for i = 1, GetNumGroupMembers() do
+    if cachedInRaid then
+        for i = 1, cachedGroupSize do
             local unit = "raid" .. i
             if UnitExists(unit) and not UnitIsUnit(unit, "player") then
                 if UnitGroupRolesAssigned(unit) == "TANK" then
@@ -165,8 +200,8 @@ local function FindOtherTank()
                 end
             end
         end
-    elseif inParty and db and db.showInParty then
-        for i = 1, GetNumGroupMembers() - 1 do
+    elseif cachedInGroup and db and db.showInParty then
+        for i = 1, cachedGroupSize - 1 do
             local unit = "party" .. i
             if UnitExists(unit) then
                 if UnitGroupRolesAssigned(unit) == "TANK" then
@@ -359,6 +394,7 @@ end
 -- Public API (for Options.lua)
 -----------------------------------------------------------
 ns.coTankFrame = nil
+ns.IsCombatLocked = IsCombatLocked
 ns.IsPlayerTankSpec = IsPlayerTankSpec
 ns.FindOtherTank = FindOtherTank
 
@@ -495,7 +531,7 @@ local pendingUpdate = false
 local testMode = false
 
 local function UpdateUnit()
-    if InCombatLockdown() then
+    if IsCombatLocked() then
         return
     end
     if not ns.coTankFrame then
@@ -522,7 +558,7 @@ end
 ns.UpdateUnit = UpdateUnit
 
 local function QueueUpdate()
-    if InCombatLockdown() then
+    if IsCombatLocked() then
         pendingUpdate = true
         return
     end
@@ -530,7 +566,7 @@ local function QueueUpdate()
 end
 
 function ns.EnterTestMode()
-    if InCombatLockdown() then
+    if IsCombatLocked() then
         return
     end
     testMode = true
@@ -540,7 +576,7 @@ function ns.EnterTestMode()
 end
 
 function ns.ExitTestMode()
-    if InCombatLockdown() then
+    if IsCombatLocked() then
         return
     end
     testMode = false
@@ -562,7 +598,7 @@ function ns.ApplySettings()
     local frame = ns.coTankFrame
 
     -- Frame size
-    if not InCombatLockdown() then
+    if not IsCombatLocked() then
         frame:SetSize(db.width, db.height)
     end
 
@@ -1020,7 +1056,7 @@ function ns.ResetToDefaults()
         CoTankTrackerDB[k] = v
     end
     ns.ApplySettings()
-    if ns.coTankFrame and not InCombatLockdown() then
+    if ns.coTankFrame and not IsCombatLocked() then
         ns.coTankFrame:ClearAllPoints()
         ns.coTankFrame:SetPoint(DEFAULTS.point, UIParent, DEFAULTS.point, DEFAULTS.x, DEFAULTS.y)
     end
@@ -1128,11 +1164,17 @@ events:RegisterEvent("ROLE_CHANGED_INFORM")
 events:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
 events:RegisterEvent("PLAYER_ENTERING_WORLD")
 events:RegisterEvent("PLAYER_REGEN_ENABLED")
+events:RegisterEvent("PLAYER_REGEN_DISABLED")
 
 events:SetScript("OnEvent", function(_, event)
     if event == "PLAYER_LOGIN" then
+        InvalidateCombatCache()
         OnLogin()
         return
+    end
+
+    if event == "PLAYER_REGEN_ENABLED" or event == "PLAYER_REGEN_DISABLED" then
+        InvalidateCombatCache()
     end
 
     if not ns.coTankFrame then
@@ -1145,6 +1187,29 @@ events:SetScript("OnEvent", function(_, event)
             UpdateUnit()
         end
         return
+    end
+
+    if event == "PLAYER_REGEN_DISABLED" then
+        return
+    end
+
+    if event == "GROUP_ROSTER_UPDATE" then
+        InvalidateGroupCache()
+    end
+
+    if event == "PLAYER_ENTERING_WORLD" then
+        InvalidateCombatCache()
+        InvalidateTankCache()
+        InvalidateGroupCache()
+    end
+
+    if event == "PLAYER_ROLES_ASSIGNED" or event == "PLAYER_SPECIALIZATION_CHANGED" then
+        InvalidateTankCache()
+        InvalidateGroupCache()
+    end
+
+    if event == "ROLE_CHANGED_INFORM" then
+        InvalidateTankCache()
     end
 
     QueueUpdate()

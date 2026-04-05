@@ -281,7 +281,7 @@ local function BuildGeneralTab(parent)
     table.insert(ns.RefreshableComponents, lockBtn)
 
     local resetPosBtn = ns.CreateButton(btnHolder, "Reset Position", function()
-        if InCombatLockdown() then
+        if ns.IsCombatLocked() then
             return
         end
         local db = CoTankTrackerDB
@@ -1308,14 +1308,14 @@ local function CreateOptionsPanel()
     panel:SetScript("OnShow", function()
         Components.RefreshAll()
         wasTestMode = ns.IsTestMode()
-        if not wasTestMode and not InCombatLockdown() then
+        if not wasTestMode and not ns.IsCombatLocked() then
             ns.EnterTestMode()
         end
         ns.ShowMockAuras()
     end)
     panel:SetScript("OnHide", function()
         ns.HideMockAuras()
-        if not wasTestMode and not InCombatLockdown() then
+        if not wasTestMode and not ns.IsCombatLocked() then
             ns.ExitTestMode()
         end
     end)
