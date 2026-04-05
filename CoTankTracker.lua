@@ -144,15 +144,10 @@ local DEBUFF_TYPE_COLORS = {
 -----------------------------------------------------------
 -- Cached state (event-driven invalidation)
 -----------------------------------------------------------
-local cachedInCombat = false
 local cachedIsTank = nil -- nil = not yet known
 local cachedInRaid = nil
 local cachedInGroup = nil
 local cachedGroupSize = nil
-
-local function InvalidateCombatCache()
-    cachedInCombat = InCombatLockdown()
-end
 
 local function InvalidateTankCache()
     cachedIsTank = nil
@@ -165,7 +160,7 @@ local function InvalidateGroupCache()
 end
 
 local function IsCombatLocked()
-    return cachedInCombat
+    return InCombatLockdown()
 end
 
 -----------------------------------------------------------
@@ -1168,13 +1163,8 @@ events:RegisterEvent("PLAYER_REGEN_DISABLED")
 
 events:SetScript("OnEvent", function(_, event)
     if event == "PLAYER_LOGIN" then
-        InvalidateCombatCache()
         OnLogin()
         return
-    end
-
-    if event == "PLAYER_REGEN_ENABLED" or event == "PLAYER_REGEN_DISABLED" then
-        InvalidateCombatCache()
     end
 
     if not ns.coTankFrame then
@@ -1198,7 +1188,6 @@ events:SetScript("OnEvent", function(_, event)
     end
 
     if event == "PLAYER_ENTERING_WORLD" then
-        InvalidateCombatCache()
         InvalidateTankCache()
         InvalidateGroupCache()
     end
