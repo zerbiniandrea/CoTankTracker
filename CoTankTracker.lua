@@ -1078,6 +1078,9 @@ local function MakeDraggable(frame)
         db.point = point
         db.x = x
         db.y = y
+        if ns.Components then
+            ns.Components.RefreshAll()
+        end
     end)
 end
 

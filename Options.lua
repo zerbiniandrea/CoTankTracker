@@ -292,7 +292,51 @@ local function BuildGeneralTab(parent)
         ns.coTankFrame:SetPoint(db.point, UIParent, db.point, db.x, db.y)
     end)
     resetPosBtn:SetPoint("LEFT", lockBtn, "RIGHT", 8, 0)
-    y = y - 22 - SECTION_GAP
+    y = y - 22 - COMPONENT_GAP
+
+    local xPosSlider = Components.Slider(content, {
+        label = "X",
+        labelWidth = 20,
+        min = -2000,
+        max = 2000,
+        step = 1,
+        get = function()
+            return CoTankTrackerDB.x
+        end,
+        onChange = function(val)
+            if ns.IsCombatLocked() then
+                return
+            end
+            CoTankTrackerDB.x = val
+            ns.coTankFrame:ClearAllPoints()
+            local db = CoTankTrackerDB
+            ns.coTankFrame:SetPoint(db.point, UIParent, db.point, db.x, db.y)
+        end,
+    })
+    xPosSlider:SetPoint("TOPLEFT", 0, y)
+    y = y - 20 - COMPONENT_GAP
+
+    local yPosSlider = Components.Slider(content, {
+        label = "Y",
+        labelWidth = 20,
+        min = -2000,
+        max = 2000,
+        step = 1,
+        get = function()
+            return CoTankTrackerDB.y
+        end,
+        onChange = function(val)
+            if ns.IsCombatLocked() then
+                return
+            end
+            CoTankTrackerDB.y = val
+            ns.coTankFrame:ClearAllPoints()
+            local db = CoTankTrackerDB
+            ns.coTankFrame:SetPoint(db.point, UIParent, db.point, db.x, db.y)
+        end,
+    })
+    yPosSlider:SetPoint("TOPLEFT", 0, y)
+    y = y - 20 - SECTION_GAP
 
     -- Danger Zone
     local _, newYDanger = ns.CreateSectionHeader(content, "Danger Zone", 0, y)
