@@ -1066,14 +1066,17 @@ local function MakeDraggable(frame)
 
     frame:SetScript("OnMouseDown", function(self, button)
         local db = CoTankTrackerDB
-        if button == "LeftButton" and not db.locked then
+        if button == "LeftButton" and not db.locked and not InCombatLockdown() then
             self:StartMoving()
         end
     end)
 
     frame:SetScript("OnMouseUp", function(self)
-        self:StopMovingOrSizing()
         local db = CoTankTrackerDB
+        if db.locked or InCombatLockdown() then
+            return
+        end
+        self:StopMovingOrSizing()
         local point, _, _, x, y = self:GetPoint()
         db.point = point
         db.x = x
