@@ -883,8 +883,7 @@ function ns.UpdateMockAuras()
     local hGrowth = PA_GROWTH[paGrowthX] or PA_GROWTH.RIGHT
     local vGrowth = PA_GROWTH[paGrowthY] or PA_GROWTH.UP
 
-    local MOCK_PA_DURATIONS = { "8.2", "14", "", "6.0", "" }
-    local MOCK_PA_STACKS = { "2", "", "", "1", "" }
+    local MOCK_PA_DURATIONS = { 12, 14, 0, 6, 0 }
     for i = 1, paNum do
         local color = db.paShowBorder and PA_BORDER_COLORS[((i - 1) % #PA_BORDER_COLORS) + 1] or nil
         if not mockPAButtons[i] then
@@ -902,15 +901,14 @@ function ns.UpdateMockAuras()
         else
             btn.Border:Hide()
         end
+        -- Private auras are rendered by Blizzard — use CooldownFrameTemplate's
+        -- built-in countdown numbers to match the real appearance
+        btn.Duration:SetText("")
+        btn.Count:SetText("")
         local dur = MOCK_PA_DURATIONS[((i - 1) % #MOCK_PA_DURATIONS) + 1]
-        if btn.Duration then
-            btn.Duration:SetFont(STANDARD_TEXT_FONT, db.debuffCountdownSize, "OUTLINE")
-            btn.Duration:SetText(dur)
-        end
-        btn.Count:SetFont(STANDARD_TEXT_FONT, db.debuffStackSize, "OUTLINE")
-        btn.Count:SetText(MOCK_PA_STACKS[((i - 1) % #MOCK_PA_STACKS) + 1])
-        if dur ~= "" and btn.Cooldown then
-            btn.Cooldown:SetCooldown(GetTime() - 4, 12)
+        if db.paShowCooldown and dur > 0 and btn.Cooldown then
+            btn.Cooldown:SetHideCountdownNumbers(not db.paShowCooldownText)
+            btn.Cooldown:SetCooldown(GetTime() - 4, dur)
             btn.Cooldown:Show()
         elseif btn.Cooldown then
             btn.Cooldown:Hide()
