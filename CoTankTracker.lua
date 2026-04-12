@@ -1136,6 +1136,7 @@ local function OnLogin()
 
     oUF:RegisterStyle("CoTankTracker", StyleCoTank)
     oUF:SetActiveStyle("CoTankTracker")
+    oUF.DisableBlizzard = function() end
     ns.coTankFrame = oUF:Spawn("player", "CoTankTrackerFrame")
 
     UnregisterUnitWatch(ns.coTankFrame)
