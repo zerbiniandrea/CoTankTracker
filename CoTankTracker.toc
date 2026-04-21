@@ -1,4 +1,4 @@
-## Interface: 120001
+## Interface: 120001, 120005
 ## Title: CoTankTracker
 ## Notes: Minimal oUF co-tank unit frame — shows the other tank in your raid
 ## Author: zerbi
