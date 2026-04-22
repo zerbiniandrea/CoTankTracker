@@ -494,6 +494,7 @@ local function UpdatePrivateAuraAnchors(unitToken)
             unitToken = unitToken,
             auraIndex = i,
             parent = anchor,
+            isContainer = false,
             showCountdownFrame = db.paShowCooldown,
             showCountdownNumbers = db.paShowCooldownText,
             iconInfo = {
