@@ -213,24 +213,6 @@ local function BuildGeneralTab(parent)
     fontSizeSlider:SetPoint("TOPLEFT", 0, y)
     y = y - 20 - SECTION_GAP
 
-    -- Behavior
-    local _, newYBehavior = ns.CreateSectionHeader(content, "Behavior", 0, y)
-    y = newYBehavior
-
-    local showInPartyCb = Components.Checkbox(content, {
-        label = "Show in party (not just raid)",
-        get = function()
-            return CoTankTrackerDB.showInParty
-        end,
-        tooltip = { title = "Party Mode", desc = "Also detect the other tank in 5-man parties." },
-        onChange = function(checked)
-            CoTankTrackerDB.showInParty = checked
-            ns.UpdateUnit()
-        end,
-    })
-    showInPartyCb:SetPoint("TOPLEFT", 0, y)
-    y = y - 20 - SECTION_GAP
-
     -- Profiles
     local _, newYProfiles = ns.CreateSectionHeader(content, "Profiles", 0, y)
     y = newYProfiles

@@ -32,7 +32,7 @@ read_globals = {
     "GetTime",
     "GetNumGroupMembers",
     "InCombatLockdown",
-    "IsInGroup",
+    "IsInInstance",
     "IsInRaid",
     "IsMouseButtonDown",
     "UnitExists",

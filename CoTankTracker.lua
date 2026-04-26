@@ -15,7 +15,6 @@ local DEFAULTS = {
     locked = true,
     showName = true,
     nameFontSize = 12,
-    showInParty = false,
     texture = "Blizzard Raid Bar",
     font = "Friz Quadrata TT",
     iconBorders = true,
@@ -145,8 +144,7 @@ local DEBUFF_TYPE_COLORS = {
 -- Cached state (event-driven invalidation)
 -----------------------------------------------------------
 local cachedIsTank = nil -- nil = not yet known
-local cachedInRaid = nil
-local cachedInGroup = nil
+local cachedInRaid = nil -- true only when in a raid group AND inside a raid instance
 local cachedGroupSize = nil
 
 local function InvalidateTankCache()
@@ -155,7 +153,6 @@ end
 
 local function InvalidateGroupCache()
     cachedInRaid = nil
-    cachedInGroup = nil
     cachedGroupSize = nil
 end
 
@@ -180,28 +177,20 @@ end
 
 local function FindOtherTank()
     if cachedInRaid == nil then
-        cachedInRaid = IsInRaid()
-        cachedInGroup = not cachedInRaid and IsInGroup()
+        local _, instanceType = IsInInstance()
+        cachedInRaid = IsInRaid() and instanceType == "raid"
         cachedGroupSize = GetNumGroupMembers()
     end
-    local db = CoTankTrackerDB
 
-    if cachedInRaid then
-        for i = 1, cachedGroupSize do
-            local unit = "raid" .. i
-            if UnitExists(unit) and not UnitIsUnit(unit, "player") then
-                if UnitGroupRolesAssigned(unit) == "TANK" then
-                    return unit
-                end
-            end
-        end
-    elseif cachedInGroup and db and db.showInParty then
-        for i = 1, cachedGroupSize - 1 do
-            local unit = "party" .. i
-            if UnitExists(unit) then
-                if UnitGroupRolesAssigned(unit) == "TANK" then
-                    return unit
-                end
+    if not cachedInRaid then
+        return nil
+    end
+
+    for i = 1, cachedGroupSize do
+        local unit = "raid" .. i
+        if UnitExists(unit) and not UnitIsUnit(unit, "player") then
+            if UnitGroupRolesAssigned(unit) == "TANK" then
+                return unit
             end
         end
     end
@@ -559,6 +548,19 @@ local function QueueUpdate()
         return
     end
     UpdateUnit()
+end
+
+-- Trailing-edge debounce: roster events can burst (raid formation, mass invites)
+-- and ZONE_CHANGED_NEW_AREA's instance API may return stale data on the first tick.
+local deferredTimer = nil
+local function ScheduleDeferredUpdate(delay)
+    if deferredTimer then
+        deferredTimer:Cancel()
+    end
+    deferredTimer = C_Timer.NewTimer(delay, function()
+        deferredTimer = nil
+        QueueUpdate()
+    end)
 end
 
 function ns.EnterTestMode()
@@ -1100,7 +1102,7 @@ end
 -----------------------------------------------------------
 -- Defaults & migrations
 -----------------------------------------------------------
-local DB_VERSION = 1
+local DB_VERSION = 2
 
 local function DeepCopyDefaults(src, dst)
     for k, v in pairs(src) do
@@ -1111,7 +1113,10 @@ local function DeepCopyDefaults(src, dst)
 end
 
 local migrations = {
-    -- [2] = function() ... end,
+    [2] = function()
+        -- showInParty was removed: addon now only activates inside raid instances.
+        CoTankTrackerDB.showInParty = nil
+    end,
 }
 
 -----------------------------------------------------------
@@ -1164,6 +1169,7 @@ events:RegisterEvent("PLAYER_ROLES_ASSIGNED")
 events:RegisterEvent("ROLE_CHANGED_INFORM")
 events:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
 events:RegisterEvent("PLAYER_ENTERING_WORLD")
+events:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 events:RegisterEvent("PLAYER_REGEN_ENABLED")
 events:RegisterEvent("PLAYER_REGEN_DISABLED")
 
@@ -1191,6 +1197,16 @@ events:SetScript("OnEvent", function(_, event)
 
     if event == "GROUP_ROSTER_UPDATE" then
         InvalidateGroupCache()
+        ScheduleDeferredUpdate(0.1)
+        return
+    end
+
+    -- ZONE_CHANGED_NEW_AREA: IsInInstance() can return stale data on the first
+    -- tick after the event fires, so defer slightly longer than the roster debounce.
+    if event == "ZONE_CHANGED_NEW_AREA" then
+        InvalidateGroupCache()
+        ScheduleDeferredUpdate(0.2)
+        return
     end
 
     if event == "PLAYER_ENTERING_WORLD" then
