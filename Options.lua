@@ -5,12 +5,18 @@ local LSM = ns.LSM
 -----------------------------------------------------------
 -- Constants
 -----------------------------------------------------------
-local PANEL_WIDTH = 500
-local PANEL_HEIGHT = 580
+local PANEL_WIDTH = 640
+local PANEL_HEIGHT = 600
 local PADDING = 16
 local COMPONENT_GAP = 6
 local SECTION_GAP = 12
-local TAB_HEIGHT = 22
+-- Vertical sidebar layout
+local SIDEBAR_WIDTH = 132
+local SIDEBAR_GAP = 10
+local HEADER_OFFSET = 44 -- vertical space reserved for the title row
+local BOTTOM_BAR_HEIGHT = 42 -- vertical space reserved for the lock/test row
+-- Width available to page content (right of the sidebar, inside the padding)
+local CONTENT_WIDTH = PANEL_WIDTH - (PADDING + SIDEBAR_WIDTH + SIDEBAR_GAP) - PADDING
 
 local ANCHOR_OPTIONS = {
     { label = "Top Left", value = "TOPLEFT" },
@@ -65,76 +71,91 @@ end
 -- Options panel
 -----------------------------------------------------------
 local panel
-local tabs = {}
-local tabContents = {}
-local activeTab
+local pageButtons = {} -- id -> sidebar button
+local pageContents = {} -- id -> scrollFrame
+local activePage
 
-local function SetActiveTab(name)
-    if activeTab == name then
+local function ActivatePage(id)
+    if activePage == id then
         return
     end
-    activeTab = name
-    for tabName, tab in pairs(tabs) do
-        tab:SetActive(tabName == name)
+    activePage = id
+    for pid, btn in pairs(pageButtons) do
+        btn:SetActive(pid == id)
     end
-    for tabName, content in pairs(tabContents) do
-        content:SetShown(tabName == name)
+    for pid, content in pairs(pageContents) do
+        content:SetShown(pid == id)
     end
 end
 
-local function CreateTab(parent, name, label, x)
-    local tab = CreateFrame("Button", nil, parent)
-    tab:SetSize(90, TAB_HEIGHT)
-    tab:SetPoint("TOPLEFT", x, 0)
-    tab.tabName = name
+-- Sidebar group header (dim caps label with a thin underline)
+local function CreateSidebarGroupHeader(parent, text)
+    local header = CreateFrame("Frame", nil, parent)
+    header:SetSize(SIDEBAR_WIDTH, 20)
 
-    local bg = tab:CreateTexture(nil, "BACKGROUND")
-    bg:SetPoint("TOPLEFT", 1, -1)
-    bg:SetPoint("BOTTOMRIGHT", -1, 0)
-    bg:SetColorTexture(0.2, 0.2, 0.2, 0)
-    tab.bg = bg
+    local fs = header:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    fs:SetPoint("LEFT", 8, 0)
+    fs:SetText("|cffffcc00" .. text:upper() .. "|r")
+    fs:SetJustifyH("LEFT")
 
-    local bottomLine = tab:CreateTexture(nil, "BORDER")
-    bottomLine:SetHeight(2)
-    bottomLine:SetPoint("BOTTOMLEFT", 1, 0)
-    bottomLine:SetPoint("BOTTOMRIGHT", -1, 0)
-    bottomLine:SetColorTexture(0.6, 0.6, 0.6, 0)
-    tab.bottomLine = bottomLine
+    local sep = header:CreateTexture(nil, "ARTWORK")
+    sep:SetHeight(1)
+    sep:SetPoint("BOTTOMLEFT", 4, 1)
+    sep:SetPoint("BOTTOMRIGHT", -4, 1)
+    sep:SetColorTexture(0.4, 0.32, 0.05, 0.6)
 
-    local text = tab:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    text:SetPoint("CENTER", 0, 0)
+    return header
+end
+
+-- Sidebar nav button with a left accent bar on the active page
+local function CreateSidebarButton(parent, label)
+    local btn = CreateFrame("Button", nil, parent)
+    btn:SetSize(SIDEBAR_WIDTH, 24)
+
+    local bg = btn:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetColorTexture(1, 1, 1, 0)
+    btn.bg = bg
+
+    local accent = btn:CreateTexture(nil, "ARTWORK")
+    accent:SetSize(2, 18)
+    accent:SetPoint("LEFT", 0, 0)
+    accent:SetColorTexture(1, 0.82, 0, 1)
+    accent:Hide()
+    btn.accent = accent
+
+    local text = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    text:SetPoint("LEFT", 14, 0)
+    text:SetJustifyH("LEFT")
     text:SetText(label)
-    tab.text = text
+    btn.text = text
 
-    tab:SetScript("OnEnter", function(self)
+    btn:SetScript("OnEnter", function(self)
         if not self.isActive then
-            self.bg:SetColorTexture(0.25, 0.25, 0.25, 0.5)
+            self.bg:SetColorTexture(1, 1, 1, 0.06)
         end
     end)
-    tab:SetScript("OnLeave", function(self)
+    btn:SetScript("OnLeave", function(self)
         if not self.isActive then
-            self.bg:SetColorTexture(0.2, 0.2, 0.2, 0)
+            self.bg:SetColorTexture(1, 1, 1, 0)
         end
     end)
-    tab:SetScript("OnClick", function()
-        SetActiveTab(name)
-    end)
 
-    function tab:SetActive(active)
+    function btn:SetActive(active)
         self.isActive = active
         if active then
-            self.bg:SetColorTexture(0.2, 0.2, 0.2, 0.8)
-            self.bottomLine:SetColorTexture(0.8, 0.6, 0, 1)
-            self.text:SetFontObject("GameFontHighlightSmall")
+            self.bg:SetColorTexture(1, 0.82, 0, 0.12)
+            self.accent:Show()
+            self.text:SetTextColor(1, 1, 1)
         else
-            self.bg:SetColorTexture(0.2, 0.2, 0.2, 0)
-            self.bottomLine:SetColorTexture(0.6, 0.6, 0.6, 0)
-            self.text:SetFontObject("GameFontNormalSmall")
+            self.bg:SetColorTexture(1, 1, 1, 0)
+            self.accent:Hide()
+            self.text:SetTextColor(0.85, 0.85, 0.85)
         end
     end
 
-    tabs[name] = tab
-    return tab
+    btn:SetActive(false)
+    return btn
 end
 
 local function CreateScrollContent(parent)
@@ -142,7 +163,7 @@ local function CreateScrollContent(parent)
     scrollFrame:SetAllPoints()
 
     local content = CreateFrame("Frame", nil, scrollFrame)
-    content:SetWidth(PANEL_WIDTH - PADDING * 2)
+    content:SetWidth(CONTENT_WIDTH)
     content:SetHeight(800)
     scrollFrame:SetScrollChild(content)
     scrollFrame:EnableMouseWheel(true)
@@ -244,116 +265,11 @@ local function BuildGeneralTab(parent)
     profileDropdown:SetPoint("TOPLEFT", 0, y)
     y = y - 26 - SECTION_GAP
 
-    -- Multiple Tanks
-    local _, newYTanks = ns.CreateSectionHeader(content, "Multiple Tanks", 0, y)
-    y = newYTanks
-
-    local tanksHelp = content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    tanksHelp:SetPoint("TOPLEFT", 0, y)
-    tanksHelp:SetWidth(PANEL_WIDTH - PADDING * 2)
-    tanksHelp:SetJustifyH("LEFT")
-    tanksHelp:SetText(
-        "Co-tanks are auto-detected. Choose which to show with |cffffcc00/ctt show 1,2|r (see |cffffcc00/ctt tanks|r). Extra frames stack from the main one."
-    )
-    y = y - 28 - COMPONENT_GAP
-
-    local frameGrowthDd = Components.Dropdown(content, {
-        label = "Stack Direction",
-        labelWidth = 90,
-        width = 120,
-        options = FRAME_GROWTH_OPTIONS,
-        get = function()
-            return CoTankTrackerDB.frameGrowth
-        end,
-        tooltip = {
-            title = "Stack Direction",
-            desc = "Direction additional co-tank frames grow from the main (anchor) frame.",
-        },
-        onChange = function(val)
-            CoTankTrackerDB.frameGrowth = val
-            ns.ApplySettings()
-        end,
-    })
-    frameGrowthDd:SetPoint("TOPLEFT", 0, y)
-    y = y - 26 - COMPONENT_GAP
-
-    local frameSpacingSlider = Components.Slider(content, {
-        label = "Frame Spacing",
-        labelWidth = 90,
-        min = 0,
-        max = 200,
-        step = 5,
-        suffix = "px",
-        get = function()
-            return CoTankTrackerDB.frameSpacing
-        end,
-        onChange = function(val)
-            CoTankTrackerDB.frameSpacing = val
-            ns.ApplySettings()
-        end,
-    })
-    frameSpacingSlider:SetPoint("TOPLEFT", 0, y)
-    y = y - 20 - COMPONENT_GAP
-
-    local requireTankCb = Components.Checkbox(content, {
-        label = "Only show when I'm a tank",
-        get = function()
-            return CoTankTrackerDB.requireTankSpec
-        end,
-        tooltip = {
-            title = "Only When Tank",
-            desc = "When enabled, frames only appear if you are a tank. Disable to track co-tanks as a healer or DPS.",
-        },
-        onChange = function(checked)
-            CoTankTrackerDB.requireTankSpec = checked
-            ns.UpdateUnit()
-        end,
-    })
-    requireTankCb:SetPoint("TOPLEFT", 0, y)
-    y = y - 20 - COMPONENT_GAP
-
-    local tankNoticeCb = Components.Checkbox(content, {
-        label = "Notify when more co-tanks detected",
-        get = function()
-            return CoTankTrackerDB.tankNotice
-        end,
-        tooltip = {
-            title = "Detection Notice",
-            desc = "Print a chat hint when more co-tanks are detected than are currently shown.",
-        },
-        onChange = function(checked)
-            CoTankTrackerDB.tankNotice = checked
-        end,
-    })
-    tankNoticeCb:SetPoint("TOPLEFT", 0, y)
-    y = y - 20 - SECTION_GAP
-
     -- Position
     local _, newYPos = ns.CreateSectionHeader(content, "Position", 0, y)
     y = newYPos
 
-    local btnHolder = CreateFrame("Frame", nil, content)
-    btnHolder:SetSize(PANEL_WIDTH - PADDING * 2, 22)
-    btnHolder:SetPoint("TOPLEFT", 0, y)
-
-    local lockBtn = ns.CreateButton(btnHolder, "Unlock", function()
-        CoTankTrackerDB.locked = not CoTankTrackerDB.locked
-        Components.RefreshAll()
-    end, { title = "Lock / Unlock", desc = "When unlocked, drag the frame to reposition it." }, {
-        border = { 0.7, 0.58, 0, 1 },
-        borderHover = { 1, 0.82, 0, 1 },
-        text = { 1, 0.82, 0, 1 },
-    })
-    lockBtn:SetSize(80, 22)
-    lockBtn:SetPoint("LEFT", 0, 0)
-
-    function lockBtn:Refresh()
-        self:SetText(CoTankTrackerDB.locked and "Unlock" or "Lock")
-    end
-    lockBtn:Refresh()
-    table.insert(ns.RefreshableComponents, lockBtn)
-
-    local resetPosBtn = ns.CreateButton(btnHolder, "Reset Position", function()
+    local resetPosBtn = ns.CreateButton(content, "Reset Position", function()
         if ns.IsCombatLocked() then
             return
         end
@@ -364,7 +280,7 @@ local function BuildGeneralTab(parent)
         ns.coTankFrame:ClearAllPoints()
         ns.coTankFrame:SetPoint(db.point, UIParent, db.point, db.x, db.y)
     end)
-    resetPosBtn:SetPoint("LEFT", lockBtn, "RIGHT", 8, 0)
+    resetPosBtn:SetPoint("TOPLEFT", 0, y)
     y = y - 22 - COMPONENT_GAP
 
     local xPosSlider = Components.Slider(content, {
@@ -424,6 +340,106 @@ local function BuildGeneralTab(parent)
     end)
     resetAllBtn:SetPoint("TOPLEFT", 0, y)
     y = y - 22
+
+    content:SetHeight(math.abs(y) + 20)
+    return scrollFrame
+end
+
+-----------------------------------------------------------
+-- Tab: Multiple Tanks
+-----------------------------------------------------------
+local function BuildMultipleTanksTab(parent)
+    local scrollFrame, content = CreateScrollContent(parent)
+    local y = 0
+
+    local help = content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    help:SetPoint("TOPLEFT", 0, y)
+    help:SetWidth(CONTENT_WIDTH)
+    help:SetJustifyH("LEFT")
+    help:SetText(
+        "Co-tanks are auto-detected. Choose which to show with |cffffcc00/ctt show 1,2|r "
+            .. "(see |cffffcc00/ctt tanks|r). Extra frames stack from the main one."
+    )
+    y = y - 32 - COMPONENT_GAP
+
+    -- Layout
+    local _, newYLayout = ns.CreateSectionHeader(content, "Layout", 0, y)
+    y = newYLayout
+
+    local frameGrowthDd = Components.Dropdown(content, {
+        label = "Stack Direction",
+        labelWidth = 90,
+        width = 120,
+        options = FRAME_GROWTH_OPTIONS,
+        get = function()
+            return CoTankTrackerDB.frameGrowth
+        end,
+        tooltip = {
+            title = "Stack Direction",
+            desc = "Direction additional co-tank frames grow from the main (anchor) frame.",
+        },
+        onChange = function(val)
+            CoTankTrackerDB.frameGrowth = val
+            ns.ApplySettings()
+        end,
+    })
+    frameGrowthDd:SetPoint("TOPLEFT", 0, y)
+    y = y - 26 - COMPONENT_GAP
+
+    local frameSpacingSlider = Components.Slider(content, {
+        label = "Frame Spacing",
+        labelWidth = 90,
+        min = 0,
+        max = 200,
+        step = 5,
+        suffix = "px",
+        get = function()
+            return CoTankTrackerDB.frameSpacing
+        end,
+        onChange = function(val)
+            CoTankTrackerDB.frameSpacing = val
+            ns.ApplySettings()
+        end,
+    })
+    frameSpacingSlider:SetPoint("TOPLEFT", 0, y)
+    y = y - 20 - SECTION_GAP
+
+    -- Detection
+    local _, newYDetect = ns.CreateSectionHeader(content, "Detection", 0, y)
+    y = newYDetect
+
+    local requireTankCb = Components.Checkbox(content, {
+        label = "Only show when I'm a tank",
+        get = function()
+            return CoTankTrackerDB.requireTankSpec
+        end,
+        tooltip = {
+            title = "Only When Tank",
+            desc = "When enabled, frames only appear if you are a tank. Disable to track co-tanks as a healer or DPS.",
+        },
+        onChange = function(checked)
+            CoTankTrackerDB.requireTankSpec = checked
+            ns.UpdateUnit()
+        end,
+    })
+    requireTankCb:SetPoint("TOPLEFT", 0, y)
+    y = y - 20 - COMPONENT_GAP
+
+    local tankNoticeCb = Components.Checkbox(content, {
+        label = "Notify when more co-tanks detected",
+        get = function()
+            return CoTankTrackerDB.tankNotice
+        end,
+        tooltip = {
+            title = "Detection Notice",
+            desc = "Print a chat hint when more co-tanks are detected than are currently shown.",
+        },
+        onChange = function(checked)
+            CoTankTrackerDB.tankNotice = checked
+        end,
+    })
+    tankNoticeCb:SetPoint("TOPLEFT", 0, y)
+    y = y - 20
 
     content:SetHeight(math.abs(y) + 20)
     return scrollFrame
@@ -1366,6 +1382,35 @@ end
 -----------------------------------------------------------
 -- Build panel
 -----------------------------------------------------------
+-- Sidebar nav layout: ordered groups of pages. Each page maps an id to a Build fn.
+local PAGE_BUILDERS = {
+    general = BuildGeneralTab,
+    frame = BuildFrameTab,
+    tanks = BuildMultipleTanksTab,
+    defensives = BuildDefensivesTab,
+    privateauras = BuildPrivateAurasTab,
+    debuffs = BuildDebuffsTab,
+}
+
+local PAGE_GROUPS = {
+    {
+        title = "Layout",
+        pages = {
+            { id = "general", title = "General" },
+            { id = "frame", title = "Frame" },
+            { id = "tanks", title = "Multiple Tanks" },
+        },
+    },
+    {
+        title = "Auras",
+        pages = {
+            { id = "defensives", title = "Defensives" },
+            { id = "privateauras", title = "Private Auras" },
+            { id = "debuffs", title = "Debuffs" },
+        },
+    },
+}
+
 local function CreateOptionsPanel()
     if panel then
         return panel
@@ -1386,39 +1431,85 @@ local function CreateOptionsPanel()
     closeBtn:SetSize(22, 22)
     closeBtn:SetPoint("TOPRIGHT", -8, -8)
 
-    -- Tab bar
-    local tabBar = CreateFrame("Frame", nil, panel)
-    tabBar:SetPoint("TOPLEFT", PADDING, -44)
-    tabBar:SetPoint("TOPRIGHT", -PADDING, -44)
-    tabBar:SetHeight(TAB_HEIGHT)
+    -- Divider primitives: the sidebar, content area, and bottom bar all anchor to
+    -- these, so the layout follows the dividers with no per-element offset juggling.
+    local headerSep = panel:CreateTexture(nil, "ARTWORK")
+    headerSep:SetHeight(1)
+    headerSep:SetPoint("TOPLEFT", PADDING, -HEADER_OFFSET)
+    headerSep:SetPoint("TOPRIGHT", -PADDING, -HEADER_OFFSET)
+    headerSep:SetColorTexture(0.3, 0.3, 0.3, 1)
 
-    CreateTab(tabBar, "general", "General", 0)
-    CreateTab(tabBar, "frame", "Frame", 94)
-    CreateTab(tabBar, "privateauras", "Priv. Auras", 188)
-    CreateTab(tabBar, "debuffs", "Debuffs", 282)
-    CreateTab(tabBar, "defensives", "Defensives", 376)
+    local bottomSep = panel:CreateTexture(nil, "ARTWORK")
+    bottomSep:SetHeight(1)
+    bottomSep:SetPoint("BOTTOMLEFT", PADDING, BOTTOM_BAR_HEIGHT)
+    bottomSep:SetPoint("BOTTOMRIGHT", -PADDING, BOTTOM_BAR_HEIGHT)
+    bottomSep:SetColorTexture(0.3, 0.3, 0.3, 1)
 
-    -- Separator under tabs
-    local sep = panel:CreateTexture(nil, "ARTWORK")
-    sep:SetHeight(1)
-    sep:SetPoint("TOPLEFT", PADDING, -44 - TAB_HEIGHT)
-    sep:SetPoint("TOPRIGHT", -PADDING, -44 - TAB_HEIGHT)
-    sep:SetColorTexture(0.3, 0.3, 0.3, 1)
+    -- Sidebar (left column between the dividers)
+    local sidebar = CreateFrame("Frame", nil, panel)
+    sidebar:SetPoint("TOPLEFT", headerSep, "BOTTOMLEFT", 0, -6)
+    sidebar:SetPoint("BOTTOMLEFT", bottomSep, "TOPLEFT", 0, 6)
+    sidebar:SetWidth(SIDEBAR_WIDTH)
 
-    -- Content area
+    local sidebarBorder = sidebar:CreateTexture(nil, "BORDER")
+    sidebarBorder:SetWidth(1)
+    sidebarBorder:SetPoint("TOPRIGHT", SIDEBAR_GAP / 2, 0)
+    sidebarBorder:SetPoint("BOTTOMRIGHT", SIDEBAR_GAP / 2, 0)
+    sidebarBorder:SetColorTexture(0.3, 0.3, 0.3, 1)
+
+    -- Content area (right of the sidebar, between the dividers)
     local contentArea = CreateFrame("Frame", nil, panel)
-    contentArea:SetPoint("TOPLEFT", PADDING, -44 - TAB_HEIGHT - 4)
-    contentArea:SetPoint("BOTTOMRIGHT", -PADDING, PADDING)
+    contentArea:SetPoint("TOPLEFT", headerSep, "BOTTOMLEFT", SIDEBAR_WIDTH + SIDEBAR_GAP, -6)
+    contentArea:SetPoint("BOTTOMRIGHT", bottomSep, "TOPRIGHT", 0, 6)
 
-    -- Build tab contents
-    tabContents["general"] = BuildGeneralTab(contentArea)
-    tabContents["frame"] = BuildFrameTab(contentArea)
-    tabContents["privateauras"] = BuildPrivateAurasTab(contentArea)
-    tabContents["debuffs"] = BuildDebuffsTab(contentArea)
-    tabContents["defensives"] = BuildDefensivesTab(contentArea)
+    -- Build pages + sidebar nav from the group registry
+    local sidebarY = 0
+    local firstId
+    for _, group in ipairs(PAGE_GROUPS) do
+        local header = CreateSidebarGroupHeader(sidebar, group.title)
+        header:SetPoint("TOPLEFT", 0, sidebarY)
+        sidebarY = sidebarY - 22
+        for _, page in ipairs(group.pages) do
+            local id = page.id
+            pageContents[id] = PAGE_BUILDERS[id](contentArea)
+            pageContents[id]:Hide()
 
-    -- Default tab
-    SetActiveTab("general")
+            local btn = CreateSidebarButton(sidebar, page.title)
+            btn:SetPoint("TOPLEFT", 0, sidebarY)
+            btn:SetScript("OnClick", function()
+                ActivatePage(id)
+            end)
+            pageButtons[id] = btn
+            sidebarY = sidebarY - 24
+            firstId = firstId or id
+        end
+        sidebarY = sidebarY - 8 -- group gap
+    end
+
+    -- Bottom bar: Lock / Unlock
+    local lockBtn = ns.CreateButton(panel, "Unlock", function()
+        CoTankTrackerDB.locked = not CoTankTrackerDB.locked
+        Components.RefreshAll()
+    end, { title = "Lock / Unlock", desc = "When unlocked, drag the frame to reposition the stack." }, {
+        border = { 0.7, 0.58, 0, 1 },
+        borderHover = { 1, 0.82, 0, 1 },
+        text = { 1, 0.82, 0, 1 },
+    })
+    lockBtn:SetSize(90, 22)
+    lockBtn:SetPoint("BOTTOMLEFT", PADDING, (BOTTOM_BAR_HEIGHT - 22) / 2)
+
+    function lockBtn:Refresh()
+        self:SetText(CoTankTrackerDB.locked and "Unlock" or "Lock")
+    end
+    lockBtn:Refresh()
+    table.insert(ns.RefreshableComponents, lockBtn)
+
+    local lockHint = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    lockHint:SetPoint("LEFT", lockBtn, "RIGHT", 10, 0)
+    lockHint:SetText("Unlock to drag the frame; the stack moves with it.")
+
+    -- Default page
+    ActivatePage(firstId)
 
     -- Auto test mode + mock auras when panel opens
     local wasTestMode = false
