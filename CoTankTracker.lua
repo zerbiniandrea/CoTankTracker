@@ -18,6 +18,7 @@ local DEFAULTS = {
     frameSpacing = 80, -- gap between stacked frames (px); clears a 36px aura row above + below each bar
     requireTankSpec = false, -- only show frames when the player is a tank
     tankNotice = true, -- print a chat notice when more co-tanks are detected than shown
+    optionsPanelScale = 1.0, -- UI scale of the options panel (0.8 - 1.5)
     showName = true,
     nameFontSize = 12,
     texture = "Blizzard Raid Bar",

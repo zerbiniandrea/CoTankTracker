@@ -1431,6 +1431,75 @@ local function CreateOptionsPanel()
     closeBtn:SetSize(22, 22)
     closeBtn:SetPoint("TOPRIGHT", -8, -8)
 
+    -- Scale stepper ( < 100% > ) left of the close button
+    local BASE_SCALE = 1.0
+    local MIN_PCT, MAX_PCT = 80, 150
+
+    local function GetScalePct()
+        return math.floor((CoTankTrackerDB.optionsPanelScale or BASE_SCALE) / BASE_SCALE * 100 + 0.5)
+    end
+
+    local scaleHolder = CreateFrame("Frame", nil, panel)
+    scaleHolder:SetPoint("RIGHT", closeBtn, "LEFT", -8, 0)
+    scaleHolder:SetSize(64, 16)
+
+    local scaleDown = scaleHolder:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    scaleDown:SetPoint("LEFT", 0, 0)
+    scaleDown:SetText("<")
+
+    local scaleValue = scaleHolder:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    scaleValue:SetPoint("LEFT", scaleDown, "RIGHT", 4, 0)
+
+    local scaleUp = scaleHolder:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    scaleUp:SetPoint("LEFT", scaleValue, "RIGHT", 4, 0)
+    scaleUp:SetText(">")
+
+    local function UpdateScaleText()
+        local pct = GetScalePct()
+        scaleValue:SetText(pct .. "%")
+        local d = pct > MIN_PCT and 1 or 0.4
+        local u = pct < MAX_PCT and 1 or 0.4
+        scaleDown:SetTextColor(d, d, d)
+        scaleUp:SetTextColor(u, u, u)
+    end
+
+    local function UpdateScale(delta)
+        local newPct = math.max(MIN_PCT, math.min(MAX_PCT, GetScalePct() + delta))
+        local newScale = newPct / 100 * BASE_SCALE
+        CoTankTrackerDB.optionsPanelScale = newScale
+        panel:SetScale(newScale)
+        UpdateScaleText()
+    end
+
+    local downBtn = CreateFrame("Button", nil, scaleHolder)
+    downBtn:SetAllPoints(scaleDown)
+    downBtn:SetScript("OnClick", function()
+        UpdateScale(-10)
+    end)
+    downBtn:SetScript("OnEnter", function()
+        if GetScalePct() > MIN_PCT then
+            scaleDown:SetTextColor(1, 0.82, 0)
+        end
+    end)
+    downBtn:SetScript("OnLeave", UpdateScaleText)
+
+    local upBtn = CreateFrame("Button", nil, scaleHolder)
+    upBtn:SetAllPoints(scaleUp)
+    upBtn:SetScript("OnClick", function()
+        UpdateScale(10)
+    end)
+    upBtn:SetScript("OnEnter", function()
+        if GetScalePct() < MAX_PCT then
+            scaleUp:SetTextColor(1, 0.82, 0)
+        end
+    end)
+    upBtn:SetScript("OnLeave", UpdateScaleText)
+
+    if CoTankTrackerDB.optionsPanelScale then
+        panel:SetScale(CoTankTrackerDB.optionsPanelScale)
+    end
+    UpdateScaleText()
+
     -- Divider primitives: the sidebar, content area, and bottom bar all anchor to
     -- these, so the layout follows the dividers with no per-element offset juggling.
     local headerSep = panel:CreateTexture(nil, "ARTWORK")
