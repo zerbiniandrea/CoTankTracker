@@ -13,6 +13,11 @@ local DEFAULTS = {
     x = 200,
     y = 0,
     locked = true,
+    -- Multi-tank frames
+    frameGrowth = "DOWN", -- stack direction for frames 2+ ("UP"/"DOWN"/"LEFT"/"RIGHT")
+    frameSpacing = 80, -- gap between stacked frames (px); clears a 36px aura row above + below each bar
+    requireTankSpec = false, -- only show frames when the player is a tank
+    tankNotice = true, -- print a chat notice when more co-tanks are detected than shown
     showName = true,
     nameFontSize = 12,
     texture = "Blizzard Raid Bar",
@@ -175,7 +180,14 @@ local function IsPlayerTankSpec()
     return cachedIsTank
 end
 
-local function FindOtherTank()
+-- Returns an ordered list of unit tokens for every non-player TANK in the raid.
+-- Reuses the provided table (caller-owned) to avoid per-update allocations.
+local function FindOtherTanks(out)
+    out = out or {}
+    for i = #out, 1, -1 do
+        out[i] = nil
+    end
+
     if cachedInRaid == nil then
         local _, instanceType = IsInInstance()
         cachedInRaid = IsInRaid() and instanceType == "raid"
@@ -183,19 +195,19 @@ local function FindOtherTank()
     end
 
     if not cachedInRaid then
-        return nil
+        return out
     end
 
     for i = 1, cachedGroupSize do
         local unit = "raid" .. i
         if UnitExists(unit) and not UnitIsUnit(unit, "player") then
             if UnitGroupRolesAssigned(unit) == "TANK" then
-                return unit
+                out[#out + 1] = unit
             end
         end
     end
 
-    return nil
+    return out
 end
 
 -----------------------------------------------------------
@@ -230,8 +242,10 @@ end
 -----------------------------------------------------------
 local function PostCreateAuraButton(element, button)
     local db = CoTankTrackerDB
-    local isDebuff = (ns.coTankFrame and element == ns.coTankFrame.Debuffs)
-    local isDef = (ns.coTankFrame and element == ns.coTankFrame.Buffs)
+    -- element.ctType is tagged at creation in StyleCoTank ("def" / "debuff"); identity
+    -- comparison against ns.coTankFrame.* would be wrong for stacked frames 2+.
+    local isDef = (element.ctType == "def")
+    local isDebuff = (element.ctType == "debuff")
     local stackSize, stackOffX, stackOffY
     if isDef then
         stackSize = db.defStackSize
@@ -322,6 +336,7 @@ local function StyleCoTank(frame)
         return false
     end
     defensives.PostCreateButton = PostCreateAuraButton
+    defensives.ctType = "def"
     frame.Buffs = defensives
 
     -- Debuffs (always created, visibility controlled by ApplySettings)
@@ -338,6 +353,7 @@ local function StyleCoTank(frame)
     debuffs.showDebuffType = db.debuffShowType
     ns.ApplyDebuffFilter(debuffs, db)
     debuffs.PostCreateButton = PostCreateAuraButton
+    debuffs.ctType = "debuff"
     frame.Debuffs = debuffs
 end
 
@@ -377,23 +393,28 @@ end
 -----------------------------------------------------------
 -- Public API (for Options.lua)
 -----------------------------------------------------------
+-- Pool of co-tank frames. ns.coTankFrame is kept as an alias for frame 1 (the stack
+-- anchor) so Options.lua position controls, dragging, and mock containers keep working.
+local MAX_FRAMES = 5
 ns.coTankFrame = nil
+ns.coTankFrames = nil
+ns.MAX_FRAMES = MAX_FRAMES
 ns.IsCombatLocked = IsCombatLocked
 ns.IsPlayerTankSpec = IsPlayerTankSpec
-ns.FindOtherTank = FindOtherTank
+ns.FindOtherTanks = FindOtherTanks
 
 -----------------------------------------------------------
 -- Private Aura anchors
 -----------------------------------------------------------
-local privateAuraAnchors = {}
-local currentPAUnit = nil
-
-local function GetPARelativeFrame()
+-- Private aura anchors are managed per oUF frame so that several co-tanks can each
+-- display their own Blizzard private auras simultaneously. Each frame keeps its own
+-- pool (frame.paAnchors) and tracks the unit it is currently anchoring (frame.paUnit).
+local function GetPARelativeFrame(frame)
     local db = CoTankTrackerDB
-    if db.paAttachElement == "debuffs" and ns.coTankFrame and ns.coTankFrame.Debuffs then
-        return ns.coTankFrame.Debuffs
+    if db.paAttachElement == "debuffs" and frame and frame.Debuffs then
+        return frame.Debuffs
     end
-    return ns.coTankFrame
+    return frame
 end
 
 local PA_GROWTH = {
@@ -403,23 +424,38 @@ local PA_GROWTH = {
     DOWN = { point = "TOP", relPoint = "BOTTOM", xMul = 0, yMul = -1 },
 }
 
-local function ClearPrivateAuraAnchors()
-    for i = 1, #privateAuraAnchors do
-        local anchor = privateAuraAnchors[i]
-        if anchor.paId then
-            C_UnitAuras.RemovePrivateAuraAnchor(anchor.paId)
-            anchor.paId = nil
-        end
-        anchor:ClearAllPoints()
-        anchor:Hide()
+local function ClearPrivateAuraAnchors(frame)
+    if not frame then
+        return
     end
-    currentPAUnit = nil
+    local anchors = frame.paAnchors
+    if anchors then
+        for i = 1, #anchors do
+            local anchor = anchors[i]
+            if anchor.paId then
+                C_UnitAuras.RemovePrivateAuraAnchor(anchor.paId)
+                anchor.paId = nil
+            end
+            anchor:ClearAllPoints()
+            anchor:Hide()
+        end
+    end
+    frame.paUnit = nil
 end
 
-local function UpdatePrivateAuraAnchors(unitToken)
+local function UpdatePrivateAuraAnchors(frame, unitToken)
+    if not frame then
+        return
+    end
+    local anchors = frame.paAnchors
+    if not anchors then
+        anchors = {}
+        frame.paAnchors = anchors
+    end
+
     -- Remove existing anchors
-    for i = 1, #privateAuraAnchors do
-        local anchor = privateAuraAnchors[i]
+    for i = 1, #anchors do
+        local anchor = anchors[i]
         if anchor.paId then
             C_UnitAuras.RemovePrivateAuraAnchor(anchor.paId)
             anchor.paId = nil
@@ -429,12 +465,12 @@ local function UpdatePrivateAuraAnchors(unitToken)
     end
 
     local db = CoTankTrackerDB
-    if not db.showPrivateAuras or not unitToken or not ns.coTankFrame then
-        currentPAUnit = nil
+    if not db.showPrivateAuras or not unitToken then
+        frame.paUnit = nil
         return
     end
 
-    currentPAUnit = unitToken
+    frame.paUnit = unitToken
     local scale = math.max((db.paCooldownTextScale or 100) / 100, 0.01)
     local size = db.paSize * (1 / scale)
     local spacing = db.paSpacing * (1 / scale)
@@ -446,16 +482,17 @@ local function UpdatePrivateAuraAnchors(unitToken)
     local vGrowth = PA_GROWTH[growthY] or PA_GROWTH.UP
     local showBorder = db.paShowBorder
     local borderScale = showBorder and (size / 32 * 2) or -10000
+    local namePrefix = "CoTankTrackerPA" .. (frame.paIndex or 1) .. "_"
 
     for i = 1, totalIcons do
-        local anchor = privateAuraAnchors[i]
+        local anchor = anchors[i]
         if not anchor then
-            anchor = CreateFrame("Frame", "CoTankTrackerPA" .. i, UIParent)
+            anchor = CreateFrame("Frame", namePrefix .. i, UIParent)
             anchor:SetFrameStrata("MEDIUM")
             anchor:SetFixedFrameStrata(true)
             anchor:SetFrameLevel(1000)
             anchor:SetFixedFrameLevel(true)
-            privateAuraAnchors[i] = anchor
+            anchors[i] = anchor
         end
 
         anchor:SetSize(size, size)
@@ -464,17 +501,17 @@ local function UpdatePrivateAuraAnchors(unitToken)
         if i == 1 then
             anchor:SetPoint(
                 db.paAnchor,
-                GetPARelativeFrame(),
+                GetPARelativeFrame(frame),
                 db.paAttachTo,
                 db.paOffsetX / scale,
                 db.paOffsetY / scale
             )
         elseif col == 0 then
             -- First icon of a new row: anchor relative to the first icon of the previous row
-            local rowStart = privateAuraAnchors[i - perRow]
+            local rowStart = anchors[i - perRow]
             anchor:SetPoint(vGrowth.point, rowStart, vGrowth.relPoint, spacing * vGrowth.xMul, spacing * vGrowth.yMul)
         else
-            local prev = privateAuraAnchors[i - 1]
+            local prev = anchors[i - 1]
             anchor:SetPoint(hGrowth.point, prev, hGrowth.relPoint, spacing * hGrowth.xMul, spacing * hGrowth.yMul)
         end
         anchor:Show()
@@ -502,8 +539,8 @@ local function UpdatePrivateAuraAnchors(unitToken)
     end
 
     -- Hide excess anchors
-    for i = totalIcons + 1, #privateAuraAnchors do
-        privateAuraAnchors[i]:Hide()
+    for i = totalIcons + 1, #anchors do
+        anchors[i]:Hide()
     end
 end
 ns.UpdatePrivateAuraAnchors = UpdatePrivateAuraAnchors
@@ -514,12 +551,85 @@ ns.ClearPrivateAuraAnchors = ClearPrivateAuraAnchors
 -----------------------------------------------------------
 local pendingUpdate = false
 local testMode = false
+local lastNoticedTankCount = nil
+local detectedTanks = {} -- reused scratch table for UpdateUnit
+
+-- Resolve db.selectedTanks into an ordered list of 1-based detected-tank indices.
+-- "all" -> every detected index; a table -> its in-range, de-duplicated values.
+-- Guarantees at least index 1 whenever tanks exist (a selection can never hide every
+-- frame), matching the addon's original always-show-one behavior.
+local function ResolveSelection(sel, count, out)
+    out = out or {}
+    for i = #out, 1, -1 do
+        out[i] = nil
+    end
+    if sel == "all" then
+        for i = 1, count do
+            out[i] = i
+        end
+    elseif type(sel) == "table" then
+        for _, idx in ipairs(sel) do
+            if idx >= 1 and idx <= count then
+                local dup = false
+                for j = 1, #out do
+                    if out[j] == idx then
+                        dup = true
+                        break
+                    end
+                end
+                if not dup then
+                    out[#out + 1] = idx
+                end
+            end
+        end
+    end
+    -- Never resolve to an empty set while tanks are present.
+    if #out == 0 and count > 0 then
+        out[1] = 1
+    end
+    return out
+end
+ns.ResolveSelection = ResolveSelection
+
+local function HideFramesFrom(startIdx)
+    local frames = ns.coTankFrames
+    if not frames then
+        return
+    end
+    for i = startIdx, #frames do
+        local f = frames[i]
+        f:SetAttribute("unit", nil)
+        f:Hide()
+        ClearPrivateAuraAnchors(f)
+    end
+end
+
+-- Print a one-line hint when more co-tanks exist than are currently shown.
+local selScratch = {}
+local function MaybeNoticeMoreTanks(detected, shown)
+    if not CoTankTrackerDB.tankNotice then
+        return
+    end
+    if detected > shown and detected ~= lastNoticedTankCount then
+        print(
+            string.format(
+                "|cffffcc00CoTankTracker|r: %d co-tanks detected \226\128\148 |cffffcc00/ctt tanks|r to list, "
+                    .. "|cffffcc00/ctt show 1,2|r to pick.",
+                detected
+            )
+        )
+        lastNoticedTankCount = detected
+    elseif detected <= shown then
+        -- Reset so the notice re-fires if the roster grows again later.
+        lastNoticedTankCount = nil
+    end
+end
 
 local function UpdateUnit()
     if IsCombatLocked() then
         return
     end
-    if not ns.coTankFrame then
+    if not ns.coTankFrames then
         return
     end
 
@@ -527,17 +637,33 @@ local function UpdateUnit()
         return
     end
 
-    local otherTank = FindOtherTank()
-    local shouldShow = IsPlayerTankSpec() and otherTank ~= nil
+    local tanks = FindOtherTanks(detectedTanks)
+    local roleOk = (not CoTankTrackerDB.requireTankSpec) or IsPlayerTankSpec()
+    local frames = ns.coTankFrames
+    local shown = 0
 
-    if shouldShow then
-        ns.coTankFrame:SetAttribute("unit", otherTank)
-        ns.coTankFrame:Show()
-        UpdatePrivateAuraAnchors(otherTank)
+    if roleOk and #tanks > 0 then
+        local indices = ResolveSelection(CoTankTrackerDB.selectedTanks, #tanks, selScratch)
+        for _, detIdx in ipairs(indices) do
+            local unit = tanks[detIdx]
+            if unit and shown < #frames then
+                shown = shown + 1
+                local f = frames[shown]
+                f:SetAttribute("unit", unit)
+                f:Show()
+                UpdatePrivateAuraAnchors(f, unit)
+            end
+        end
+    end
+
+    HideFramesFrom(shown + 1)
+
+    -- Only nudge when frames are actually displayable (role gate passed and tanks exist);
+    -- otherwise reset so the notice re-fires once the situation changes.
+    if roleOk and #tanks > 0 then
+        MaybeNoticeMoreTanks(#tanks, shown)
     else
-        ns.coTankFrame:SetAttribute("unit", nil)
-        ns.coTankFrame:Hide()
-        ClearPrivateAuraAnchors()
+        lastNoticedTankCount = nil
     end
 end
 ns.UpdateUnit = UpdateUnit
@@ -564,20 +690,37 @@ local function ScheduleDeferredUpdate(delay)
 end
 
 function ns.EnterTestMode()
-    if IsCombatLocked() then
+    if IsCombatLocked() or not ns.coTankFrames then
         return
     end
     testMode = true
-    ns.coTankFrame:SetAttribute("unit", "player")
-    ns.coTankFrame:Show()
-    UpdatePrivateAuraAnchors("player")
+    local frames = ns.coTankFrames
+    -- Preview at least 2 frames (or however many are selected) so the stack layout is
+    -- visible while options are open. Mock aura overlays render on frame 1 only.
+    local indices = ResolveSelection(CoTankTrackerDB.selectedTanks, #frames, selScratch)
+    local previewCount = math.max(2, #indices)
+    previewCount = math.min(previewCount, #frames)
+    for i = 1, previewCount do
+        local f = frames[i]
+        f:SetAttribute("unit", "player")
+        f:Show()
+    end
+    HideFramesFrom(previewCount + 1)
+    -- Private auras preview only on the anchor frame (mock overlays live there too).
+    UpdatePrivateAuraAnchors(frames[1], "player")
+    for i = 2, previewCount do
+        ClearPrivateAuraAnchors(frames[i])
+    end
 end
 
 function ns.ExitTestMode()
+    testMode = false
+    -- Frames can't be reassigned in combat; defer the live re-evaluation to
+    -- PLAYER_REGEN_ENABLED so we don't strand the preview frames on "player".
     if IsCombatLocked() then
+        pendingUpdate = true
         return
     end
-    testMode = false
     UpdateUnit()
 end
 
@@ -586,14 +729,41 @@ function ns.IsTestMode()
 end
 
 -----------------------------------------------------------
--- Apply settings to live frame (no reload needed)
+-- Stack positioning (frames 2+ anchor to the frame above them)
 -----------------------------------------------------------
-function ns.ApplySettings()
-    if not ns.coTankFrame then
+local STACK_GROWTH = {
+    DOWN = { point = "TOP", relPoint = "BOTTOM", x = 0, y = -1 },
+    UP = { point = "BOTTOM", relPoint = "TOP", x = 0, y = 1 },
+    LEFT = { point = "RIGHT", relPoint = "LEFT", x = -1, y = 0 },
+    RIGHT = { point = "LEFT", relPoint = "RIGHT", x = 1, y = 0 },
+}
+
+-- Anchor each pool frame (2+) relative to the previous one. Frame 1 keeps its own
+-- saved position on UIParent. Since assignment always fills frames 1..N contiguously,
+-- hidden trailing frames never leave gaps in the stack.
+local function ApplyStackAnchors()
+    local frames = ns.coTankFrames
+    if not frames or IsCombatLocked() then
         return
     end
     local db = CoTankTrackerDB
-    local frame = ns.coTankFrame
+    local g = STACK_GROWTH[db.frameGrowth] or STACK_GROWTH.DOWN
+    local spacing = db.frameSpacing or 0
+    for i = 2, #frames do
+        local f = frames[i]
+        f:ClearAllPoints()
+        f:SetPoint(g.point, frames[i - 1], g.relPoint, spacing * g.x, spacing * g.y)
+    end
+end
+ns.ApplyStackAnchors = ApplyStackAnchors
+
+-----------------------------------------------------------
+-- Apply settings to live frame (no reload needed)
+-----------------------------------------------------------
+-- Apply all appearance settings to a single frame. Settings are shared across the pool,
+-- so this is called for every frame in ns.coTankFrames.
+local function ApplyFrameSettings(frame)
+    local db = CoTankTrackerDB
 
     -- Frame size
     if not IsCombatLocked() then
@@ -685,10 +855,25 @@ function ns.ApplySettings()
     if frame:IsShown() then
         frame:UpdateAllElements("ForceUpdate")
     end
+end
 
-    -- Refresh private aura anchors
-    if currentPAUnit then
-        UpdatePrivateAuraAnchors(currentPAUnit)
+function ns.ApplySettings()
+    if not ns.coTankFrames then
+        return
+    end
+
+    for _, frame in ipairs(ns.coTankFrames) do
+        ApplyFrameSettings(frame)
+    end
+
+    -- Re-anchor the stack (frame growth / spacing may have changed)
+    ApplyStackAnchors()
+
+    -- Refresh private aura anchors for every frame currently tracking a unit
+    for _, frame in ipairs(ns.coTankFrames) do
+        if frame.paUnit then
+            UpdatePrivateAuraAnchors(frame, frame.paUnit)
+        end
     end
 
     -- Update mocks if visible
@@ -1008,13 +1193,15 @@ end
 
 function ns.ShowMockAuras()
     ns.mockVisible = true
-    -- Hide real oUF auras
-    local frame = ns.coTankFrame
-    if frame and frame.Buffs then
-        frame.Buffs:Hide()
-    end
-    if frame and frame.Debuffs then
-        frame.Debuffs:Hide()
+    -- Hide real oUF auras on every pool frame so preview frames 2+ stay plain bars
+    -- and frame 1 shows only the mock overlays.
+    for _, frame in ipairs(ns.coTankFrames or {}) do
+        if frame.Buffs then
+            frame.Buffs:Hide()
+        end
+        if frame.Debuffs then
+            frame.Debuffs:Hide()
+        end
     end
     -- Private aura anchors stay visible (they use Blizzard rendering)
     ns.UpdateMockAuras()
@@ -1031,16 +1218,17 @@ function ns.HideMockAuras()
     if mockDefContainer then
         mockDefContainer:Hide()
     end
-    -- Restore real oUF auras
-    local frame = ns.coTankFrame
-    if frame and frame.Buffs then
-        frame.Buffs:Show()
-    end
-    if frame and frame.Debuffs then
-        frame.Debuffs:Show()
-    end
-    if frame and frame:IsShown() then
-        frame:UpdateAllElements("ForceUpdate")
+    -- Restore real oUF auras on every pool frame
+    for _, frame in ipairs(ns.coTankFrames or {}) do
+        if frame.Buffs then
+            frame.Buffs:Show()
+        end
+        if frame.Debuffs then
+            frame.Debuffs:Show()
+        end
+        if frame:IsShown() then
+            frame:UpdateAllElements("ForceUpdate")
+        end
     end
 end
 
@@ -1051,11 +1239,14 @@ function ns.ResetToDefaults()
     for k, v in pairs(DEFAULTS) do
         CoTankTrackerDB[k] = v
     end
+    CoTankTrackerDB.selectedTanks = { 1 }
     ns.ApplySettings()
     if ns.coTankFrame and not IsCombatLocked() then
         ns.coTankFrame:ClearAllPoints()
         ns.coTankFrame:SetPoint(DEFAULTS.point, UIParent, DEFAULTS.point, DEFAULTS.x, DEFAULTS.y)
+        ns.ApplyStackAnchors()
     end
+    ns.UpdateUnit()
 end
 
 -----------------------------------------------------------
@@ -1093,9 +1284,83 @@ end
 -----------------------------------------------------------
 SLASH_COTANKTRACKER1 = "/cotanktracker"
 SLASH_COTANKTRACKER2 = "/ctt"
-SlashCmdList["COTANKTRACKER"] = function()
-    if ns.ToggleOptions then
-        ns.ToggleOptions()
+
+local function PrintMsg(msg)
+    print("|cffffcc00CoTankTracker|r: " .. msg)
+end
+
+-- Parse the argument of `/ctt show`: "all" -> "all", or a CSV of 1-based indices.
+-- At least one tank is always shown, so an empty/invalid arg falls back to {1}.
+local function ParseShowArg(arg)
+    arg = arg:gsub("%s+", "")
+    if arg == "all" then
+        return "all"
+    end
+    local list, seen = {}, {}
+    for num in arg:gmatch("%d+") do
+        local n = tonumber(num)
+        if n and n >= 1 and not seen[n] then
+            seen[n] = true
+            list[#list + 1] = n
+        end
+    end
+    if #list == 0 then
+        list[1] = 1
+    end
+    return list
+end
+
+local slashTanks = {}
+local function PrintTankList()
+    local tanks = FindOtherTanks(slashTanks)
+    if #tanks == 0 then
+        PrintMsg("no other tanks detected (you must be in a raid instance).")
+        return
+    end
+    local indices = ResolveSelection(CoTankTrackerDB.selectedTanks, #tanks)
+    local shownSet = {}
+    for _, idx in ipairs(indices) do
+        shownSet[idx] = true
+    end
+    PrintMsg(#tanks .. " co-tank(s) detected:")
+    for i, unit in ipairs(tanks) do
+        local name = UnitName(unit) or unit
+        local _, class = UnitClass(unit)
+        local color = class and RAID_CLASS_COLORS[class]
+        if color then
+            name = "|c" .. color.colorStr .. name .. "|r"
+        end
+        local marker = shownSet[i] and " |cff00ff00(shown)|r" or ""
+        print(string.format("  %d. %s%s", i, name, marker))
+    end
+    print("  |cffffcc00/ctt show 1,2|r to choose \226\128\148 or |cffffcc00/ctt show all|r.")
+end
+
+SlashCmdList["COTANKTRACKER"] = function(msg)
+    msg = msg or ""
+    local cmd, rest = msg:match("^%s*(%S*)%s*(.-)%s*$")
+    cmd = (cmd or ""):lower()
+
+    if cmd == "" or cmd == "config" or cmd == "options" then
+        if ns.ToggleOptions then
+            ns.ToggleOptions()
+        end
+    elseif cmd == "tanks" or cmd == "list" then
+        PrintTankList()
+    elseif cmd == "show" then
+        CoTankTrackerDB.selectedTanks = ParseShowArg(rest:lower())
+        ns.UpdateUnit()
+        if ns.Components then
+            ns.Components.RefreshAll()
+        end
+        PrintTankList()
+    elseif cmd == "help" then
+        PrintMsg("commands:")
+        print("  |cffffcc00/ctt|r \226\128\148 open options")
+        print("  |cffffcc00/ctt tanks|r \226\128\148 list detected co-tanks")
+        print("  |cffffcc00/ctt show 1,2|r \226\128\148 show co-tanks 1 and 2 (or |cffffcc00all|r)")
+    else
+        PrintMsg("unknown command \226\128\148 type |cffffcc00/ctt help|r.")
     end
 end
 
@@ -1138,19 +1403,35 @@ local function OnLogin()
 
     -- Fill in any missing defaults
     DeepCopyDefaults(DEFAULTS, CoTankTrackerDB)
+    -- selectedTanks is a table/"all" value, so it can't live in DEFAULTS (DeepCopyDefaults
+    -- would alias the shared default table). Initialize it explicitly.
+    if type(CoTankTrackerDB.selectedTanks) ~= "table" and CoTankTrackerDB.selectedTanks ~= "all" then
+        CoTankTrackerDB.selectedTanks = { 1 }
+    end
     local db = CoTankTrackerDB
 
     oUF:RegisterStyle("CoTankTracker", StyleCoTank)
     oUF:SetActiveStyle("CoTankTracker")
     oUF.DisableBlizzard = function() end
-    ns.coTankFrame = oUF:Spawn("player", "CoTankTrackerFrame")
 
-    UnregisterUnitWatch(ns.coTankFrame)
-    ns.coTankFrame:Hide()
+    -- Spawn a fixed pool of co-tank frames. Frame 1 is the stack anchor; ns.coTankFrame
+    -- aliases it so existing position/drag/mock code keeps working unchanged.
+    ns.coTankFrames = {}
+    for i = 1, MAX_FRAMES do
+        local name = (i == 1) and "CoTankTrackerFrame" or ("CoTankTrackerFrame" .. i)
+        local frame = oUF:Spawn("player", name)
+        frame.paIndex = i
+        UnregisterUnitWatch(frame)
+        frame:Hide()
+        ns.coTankFrames[i] = frame
+    end
+    ns.coTankFrame = ns.coTankFrames[1]
 
     ns.coTankFrame:ClearAllPoints()
     ns.coTankFrame:SetPoint(db.point, UIParent, db.point, db.x, db.y)
+    ApplyStackAnchors()
 
+    -- Only the anchor frame is draggable; it carries the rest of the stack with it.
     MakeDraggable(ns.coTankFrame)
     if db.showPrivateAuras and db.paShowBorder then
         C_UnitAuras.TriggerPrivateAuraShowDispelType(true)

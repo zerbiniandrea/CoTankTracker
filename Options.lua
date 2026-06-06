@@ -24,6 +24,13 @@ local ANCHOR_OPTIONS = {
     { label = "Center", value = "CENTER" },
 }
 
+local FRAME_GROWTH_OPTIONS = {
+    { label = "Down", value = "DOWN" },
+    { label = "Up", value = "UP" },
+    { label = "Left", value = "LEFT" },
+    { label = "Right", value = "RIGHT" },
+}
+
 local DEBUFF_FILTER_OPTIONS = {
     { label = "All", value = "all" },
     { label = "Raid", value = "raid", desc = "Debuffs that appear on raid frames (HARMFUL|RAID)." },
@@ -236,6 +243,90 @@ local function BuildGeneralTab(parent)
     })
     profileDropdown:SetPoint("TOPLEFT", 0, y)
     y = y - 26 - SECTION_GAP
+
+    -- Multiple Tanks
+    local _, newYTanks = ns.CreateSectionHeader(content, "Multiple Tanks", 0, y)
+    y = newYTanks
+
+    local tanksHelp = content:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    tanksHelp:SetPoint("TOPLEFT", 0, y)
+    tanksHelp:SetWidth(PANEL_WIDTH - PADDING * 2)
+    tanksHelp:SetJustifyH("LEFT")
+    tanksHelp:SetText(
+        "Co-tanks are auto-detected. Choose which to show with |cffffcc00/ctt show 1,2|r (see |cffffcc00/ctt tanks|r). Extra frames stack from the main one."
+    )
+    y = y - 28 - COMPONENT_GAP
+
+    local frameGrowthDd = Components.Dropdown(content, {
+        label = "Stack Direction",
+        labelWidth = 90,
+        width = 120,
+        options = FRAME_GROWTH_OPTIONS,
+        get = function()
+            return CoTankTrackerDB.frameGrowth
+        end,
+        tooltip = {
+            title = "Stack Direction",
+            desc = "Direction additional co-tank frames grow from the main (anchor) frame.",
+        },
+        onChange = function(val)
+            CoTankTrackerDB.frameGrowth = val
+            ns.ApplySettings()
+        end,
+    })
+    frameGrowthDd:SetPoint("TOPLEFT", 0, y)
+    y = y - 26 - COMPONENT_GAP
+
+    local frameSpacingSlider = Components.Slider(content, {
+        label = "Frame Spacing",
+        labelWidth = 90,
+        min = 0,
+        max = 200,
+        step = 5,
+        suffix = "px",
+        get = function()
+            return CoTankTrackerDB.frameSpacing
+        end,
+        onChange = function(val)
+            CoTankTrackerDB.frameSpacing = val
+            ns.ApplySettings()
+        end,
+    })
+    frameSpacingSlider:SetPoint("TOPLEFT", 0, y)
+    y = y - 20 - COMPONENT_GAP
+
+    local requireTankCb = Components.Checkbox(content, {
+        label = "Only show when I'm a tank",
+        get = function()
+            return CoTankTrackerDB.requireTankSpec
+        end,
+        tooltip = {
+            title = "Only When Tank",
+            desc = "When enabled, frames only appear if you are a tank. Disable to track co-tanks as a healer or DPS.",
+        },
+        onChange = function(checked)
+            CoTankTrackerDB.requireTankSpec = checked
+            ns.UpdateUnit()
+        end,
+    })
+    requireTankCb:SetPoint("TOPLEFT", 0, y)
+    y = y - 20 - COMPONENT_GAP
+
+    local tankNoticeCb = Components.Checkbox(content, {
+        label = "Notify when more co-tanks detected",
+        get = function()
+            return CoTankTrackerDB.tankNotice
+        end,
+        tooltip = {
+            title = "Detection Notice",
+            desc = "Print a chat hint when more co-tanks are detected than are currently shown.",
+        },
+        onChange = function(checked)
+            CoTankTrackerDB.tankNotice = checked
+        end,
+    })
+    tankNoticeCb:SetPoint("TOPLEFT", 0, y)
+    y = y - 20 - SECTION_GAP
 
     -- Position
     local _, newYPos = ns.CreateSectionHeader(content, "Position", 0, y)

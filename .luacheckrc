@@ -35,14 +35,17 @@ read_globals = {
     "IsInInstance",
     "IsInRaid",
     "IsMouseButtonDown",
+    "UnitClass",
     "UnitExists",
     "UnitGroupRolesAssigned",
     "UnitIsUnit",
+    "UnitName",
 
     "tinsert",
 
     -- WoW UI globals
     "DEBUFF_TYPE_COLORS",
+    "RAID_CLASS_COLORS",
     "GameTooltip",
     "STANDARD_TEXT_FONT",
     "UIParent",
