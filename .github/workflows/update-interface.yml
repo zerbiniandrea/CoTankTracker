@@ -3,7 +3,8 @@ name: Update WoW TOC Interface
 on:
   workflow_dispatch:
   schedule:
-    - cron: "37 4 * * 1"
+    - cron: "0 18 * * 2" # Tue 18:00 UTC — after US weekly maintenance
+    - cron: "0 9 * * 3" # Wed 09:00 UTC — after EU weekly maintenance
 
 permissions:
   contents: write
