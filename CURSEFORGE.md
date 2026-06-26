@@ -1,6 +1,7 @@
 # CoTankTracker
 
 [![](https://shields.io/badge/github-gray?logo=github&style=for-the-badge&logoColor=white)](https://github.com/zerbiniandrea/CoTankTracker)
+[![](https://shields.io/badge/ko--fi-FF5E5B?logo=ko-fi&style=for-the-badge&logoColor=white)](https://ko-fi.com/zerbyy)
 
 Minimal oUF co-tank unit frame for World of Warcraft
 
@@ -32,3 +33,7 @@ Two built-in profiles are available from the options panel. Switch between them 
 ## Configuration
 
 Type `/ctt` to open the options panel.
+
+## Support
+
+If CoTankTracker keeps an eye on your co-tank for you, consider [supporting development on Ko-fi](https://ko-fi.com/zerbyy) ❤️

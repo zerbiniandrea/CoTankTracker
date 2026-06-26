@@ -1411,6 +1411,25 @@ local PAGE_GROUPS = {
     },
 }
 
+StaticPopupDialogs["COTANKTRACKER_KOFI_URL"] = {
+    text = "Thank you for supporting CoTankTracker!\nCopy the URL below (Ctrl+C):",
+    button1 = "Close",
+    hasEditBox = true,
+    editBoxWidth = 250,
+    OnShow = function(self)
+        self.EditBox:SetText("https://ko-fi.com/zerbyy")
+        self.EditBox:HighlightText()
+        self.EditBox:SetFocus()
+    end,
+    EditBoxOnEscapePressed = function(self)
+        self:GetParent():Hide()
+    end,
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+    preferredIndex = 3,
+}
+
 local function CreateOptionsPanel()
     if panel then
         return panel
@@ -1423,6 +1442,30 @@ local function CreateOptionsPanel()
     local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOPLEFT", PADDING, -PADDING)
     title:SetText("|cffffcc00CoTank|r|cffffffffTracker|r")
+
+    -- Ko-fi support link (right of the title)
+    local kofiLink = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    kofiLink:SetPoint("LEFT", title, "RIGHT", 10, 0)
+    kofiLink:SetText("|cffff5e5bSupport on Ko-fi|r")
+
+    local kofiHit = CreateFrame("Button", nil, panel)
+    kofiHit:SetAllPoints(kofiLink)
+    kofiHit:SetScript("OnClick", function()
+        StaticPopup_Show("COTANKTRACKER_KOFI_URL")
+    end)
+    kofiHit:SetScript("OnEnter", function()
+        kofiLink:SetText("|cffff8a88Support on Ko-fi|r")
+        ns.ShowTooltip(
+            kofiHit,
+            "Support on Ko-fi",
+            "Enjoying CoTankTracker?\nConsider supporting development on Ko-fi!",
+            "ANCHOR_BOTTOM"
+        )
+    end)
+    kofiHit:SetScript("OnLeave", function()
+        kofiLink:SetText("|cffff5e5bSupport on Ko-fi|r")
+        ns.HideTooltip()
+    end)
 
     -- Close button
     local closeBtn = ns.CreateButton(panel, "x", function()

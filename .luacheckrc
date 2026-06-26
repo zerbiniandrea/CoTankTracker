@@ -19,6 +19,7 @@ globals = {
     "SLASH_COTANKTRACKER1",
     "SLASH_COTANKTRACKER2",
     "SlashCmdList",
+    "StaticPopupDialogs",
 }
 
 read_globals = {
@@ -32,6 +33,7 @@ read_globals = {
     "GetTime",
     "GetNumGroupMembers",
     "InCombatLockdown",
+    "StaticPopup_Show",
     "IsInInstance",
     "IsInRaid",
     "IsMouseButtonDown",

@@ -2,6 +2,10 @@
 <p align="center">
   <img src="https://github.com/zerbiniandrea/CoTankTracker/blob/main/assets/logo.png?raw=true" width="180" />
 </p>
+<p align="center">
+  <a href="https://github.com/zerbiniandrea/CoTankTracker"><img src="https://shields.io/badge/github-gray?logo=github&style=for-the-badge&logoColor=white" /></a>
+  <a href="https://ko-fi.com/zerbyy"><img src="https://shields.io/badge/ko--fi-FF5E5B?logo=ko-fi&style=for-the-badge&logoColor=white" /></a>
+</p>
 <p align="center">Minimal oUF co-tank unit frame for World of Warcraft</p>
 
 Automatically detects the other tank in your raid and displays a compact unit frame with health, name, buffs, and debuffs. No configuration needed — just install and go.
@@ -36,3 +40,7 @@ Two built-in profiles are available from the options panel. Switch between them 
 ## Configuration
 
 Type `/ctt` to open the options panel.
+
+## Support
+
+If CoTankTracker keeps an eye on your co-tank for you, consider [supporting development on Ko-fi](https://ko-fi.com/zerbyy) ❤️
