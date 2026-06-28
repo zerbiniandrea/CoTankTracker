@@ -272,8 +272,10 @@ end
 
 function ns.CreatePanel(name, width, height, options)
     options = options or {}
-    local bgColor = options.bgColor or { 0.1, 0.1, 0.1, 0.95 }
-    local borderColor = options.borderColor or { 0.3, 0.3, 0.3, 1 }
+    -- Cool-biased neutrals: a slight blue tint over flat grey reads as a chosen
+    -- ground against the warm gold accent (a pure mid-grey reads as unconsidered).
+    local bgColor = options.bgColor or { 0.09, 0.09, 0.107, 0.97 }
+    local borderColor = options.borderColor or { 0.27, 0.27, 0.32, 1 }
 
     local panel = CreateFrame("Frame", name, UIParent, "BackdropTemplate")
     panel:SetSize(width, height)
