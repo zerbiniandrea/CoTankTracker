@@ -201,7 +201,7 @@ local function FindOtherTanks(out)
 
     for i = 1, cachedGroupSize do
         local unit = "raid" .. i
-        if UnitExists(unit) and not UnitIsUnit(unit, "player") then
+        if UnitExists(unit) and not UnitIsUnit(unit, "player") and UnitIsConnected(unit) then
             if UnitGroupRolesAssigned(unit) == "TANK" then
                 out[#out + 1] = unit
             end
@@ -1447,6 +1447,7 @@ end
 local events = CreateFrame("Frame")
 events:RegisterEvent("PLAYER_LOGIN")
 events:RegisterEvent("GROUP_ROSTER_UPDATE")
+events:RegisterEvent("UNIT_CONNECTION")
 events:RegisterEvent("PLAYER_ROLES_ASSIGNED")
 events:RegisterEvent("ROLE_CHANGED_INFORM")
 events:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
@@ -1479,6 +1480,14 @@ events:SetScript("OnEvent", function(_, event)
 
     if event == "GROUP_ROSTER_UPDATE" then
         InvalidateGroupCache()
+        ScheduleDeferredUpdate(0.1)
+        return
+    end
+
+    -- A tank going offline/online doesn't change the roster size, so it won't
+    -- arrive as GROUP_ROSTER_UPDATE. Re-run detection so disconnected tanks drop
+    -- out (FindOtherTanks skips them) and reconnected ones reappear.
+    if event == "UNIT_CONNECTION" then
         ScheduleDeferredUpdate(0.1)
         return
     end

@@ -40,6 +40,7 @@ read_globals = {
     "UnitClass",
     "UnitExists",
     "UnitGroupRolesAssigned",
+    "UnitIsConnected",
     "UnitIsUnit",
     "UnitName",
 
