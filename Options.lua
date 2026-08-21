@@ -43,12 +43,17 @@ local DEBUFF_FILTER_OPTIONS = {
     {
         label = "Important",
         value = "important",
-        desc = "Important debuffs as defined by Blizzard (HARMFUL|IMPORTANT).",
+        desc = "Debuffs Blizzard curates as priority auras, the same set the raid frames show.",
     },
     {
         label = "Raid + Important",
         value = "raid_important",
-        desc = "Raid debuffs marked as important (HARMFUL|RAID|IMPORTANT).",
+        desc = "Raid debuffs that are also priority auras.",
+    },
+    {
+        label = "Boss + Role",
+        value = "boss_role",
+        desc = "Boss debuffs and role mechanics, the tank-relevant auras Blizzard flags for a role.",
     },
 }
 
@@ -240,30 +245,6 @@ local function BuildGeneralTab(parent)
     })
     fontSizeSlider:SetPoint("TOPLEFT", 0, y)
     y = y - 20 - SECTION_GAP
-
-    -- Profiles
-    local _, newYProfiles = ns.CreateSectionHeader(content, "Profiles", 0, y)
-    y = newYProfiles
-
-    local profileOptions = { placeholder = "Select a profile" }
-    for i, profile in ipairs(ns.PROFILES) do
-        profileOptions[#profileOptions + 1] = { label = profile.name, value = i }
-    end
-    local profileDropdown = Components.Dropdown(content, {
-        label = "Profile",
-        labelWidth = 50,
-        width = 150,
-        options = profileOptions,
-        onChange = function(value)
-            ns.ApplyProfile(value)
-            Components.RefreshAll()
-            if ns.mockVisible then
-                ns.UpdateMockAuras()
-            end
-        end,
-    })
-    profileDropdown:SetPoint("TOPLEFT", 0, y)
-    y = y - 26 - SECTION_GAP
 
     -- Position
     local _, newYPos = ns.CreateSectionHeader(content, "Position", 0, y)
@@ -520,7 +501,7 @@ local function BuildFrameTab(parent)
         end,
         tooltip = {
             title = "Icon Borders",
-            desc = "Show a thin black border around buff, debuff, and private aura icons.",
+            desc = "Show a thin black border around defensive and debuff icons.",
         },
         onChange = function(checked)
             CoTankTrackerDB.iconBorders = checked
@@ -840,291 +821,6 @@ local function BuildDebuffsTab(parent)
 end
 
 -----------------------------------------------------------
--- Tab: Private Auras
------------------------------------------------------------
-local function BuildPrivateAurasTab(parent)
-    local scrollFrame, content = CreateScrollContent(parent)
-    local y = 0
-    local enabled = function()
-        return CoTankTrackerDB.showPrivateAuras
-    end
-
-    local showPACb = Components.Checkbox(content, {
-        label = "Show private auras",
-        get = function()
-            return CoTankTrackerDB.showPrivateAuras
-        end,
-        tooltip = {
-            title = "Private Auras",
-            desc = "Display Blizzard private auras on your co-tank using the native C_UnitAuras anchor API. These are boss mechanic auras that are normally only visible to the affected player.",
-        },
-        onChange = function(checked)
-            CoTankTrackerDB.showPrivateAuras = checked
-            if checked and CoTankTrackerDB.paShowBorder then
-                C_UnitAuras.TriggerPrivateAuraShowDispelType(true)
-            end
-            ns.ApplySettings()
-            Components.RefreshAll()
-        end,
-    })
-    showPACb:SetPoint("TOPLEFT", 0, y)
-    y = y - 20 - SECTION_GAP
-
-    -- Icons
-    local _, newYIcons = ns.CreateSectionHeader(content, "Icons", 0, y)
-    y = newYIcons
-
-    local paSizeSlider = Components.Slider(content, {
-        label = "Size",
-        min = 16,
-        max = 64,
-        step = 1,
-        suffix = "px",
-        get = function()
-            return CoTankTrackerDB.paSize
-        end,
-        enabled = enabled,
-        onChange = function(val)
-            CoTankTrackerDB.paSize = val
-            ns.ApplySettings()
-        end,
-    })
-    paSizeSlider:SetPoint("TOPLEFT", 0, y)
-    y = y - 20 - COMPONENT_GAP
-
-    local paMaxSlider = Components.Slider(content, {
-        label = "Per Row",
-        labelWidth = 70,
-        min = 1,
-        max = 5,
-        step = 1,
-        get = function()
-            return CoTankTrackerDB.paMaxIcons
-        end,
-        enabled = enabled,
-        onChange = function(val)
-            CoTankTrackerDB.paMaxIcons = val
-            ns.ApplySettings()
-        end,
-    })
-    paMaxSlider:SetPoint("TOPLEFT", 0, y)
-    y = y - 20 - COMPONENT_GAP
-
-    local paMaxRowsSlider = Components.Slider(content, {
-        label = "Max Rows",
-        labelWidth = 70,
-        min = 1,
-        max = 4,
-        step = 1,
-        get = function()
-            return CoTankTrackerDB.paMaxRows
-        end,
-        enabled = enabled,
-        onChange = function(val)
-            CoTankTrackerDB.paMaxRows = val
-            ns.ApplySettings()
-        end,
-    })
-    paMaxRowsSlider:SetPoint("TOPLEFT", 0, y)
-    y = y - 20 - COMPONENT_GAP
-
-    local paSpacingSlider = Components.Slider(content, {
-        label = "Spacing",
-        min = 0,
-        max = 16,
-        step = 1,
-        suffix = "px",
-        get = function()
-            return CoTankTrackerDB.paSpacing
-        end,
-        enabled = enabled,
-        onChange = function(val)
-            CoTankTrackerDB.paSpacing = val
-            ns.ApplySettings()
-        end,
-    })
-    paSpacingSlider:SetPoint("TOPLEFT", 0, y)
-    y = y - 20 - SECTION_GAP
-
-    -- Display
-    local _, newYDisplay = ns.CreateSectionHeader(content, "Display", 0, y)
-    y = newYDisplay
-
-    local paBorderCb = Components.Checkbox(content, {
-        label = "Show dispel type border",
-        get = function()
-            return CoTankTrackerDB.paShowBorder
-        end,
-        enabled = enabled,
-        tooltip = { title = "Border", desc = "Show the dispel type border around private aura icons." },
-        onChange = function(checked)
-            CoTankTrackerDB.paShowBorder = checked
-            if checked then
-                C_UnitAuras.TriggerPrivateAuraShowDispelType(true)
-            end
-            ns.ApplySettings()
-        end,
-    })
-    paBorderCb:SetPoint("TOPLEFT", 0, y)
-    y = y - 20 - COMPONENT_GAP
-
-    local paCooldownCb = Components.Checkbox(content, {
-        label = "Show cooldown swipe",
-        get = function()
-            return CoTankTrackerDB.paShowCooldown
-        end,
-        enabled = enabled,
-        onChange = function(checked)
-            CoTankTrackerDB.paShowCooldown = checked
-            ns.ApplySettings()
-            Components.RefreshAll()
-        end,
-    })
-    paCooldownCb:SetPoint("TOPLEFT", 0, y)
-    y = y - 20 - COMPONENT_GAP
-
-    local paCooldownTextCb = Components.Checkbox(content, {
-        label = "Show cooldown text",
-        get = function()
-            return CoTankTrackerDB.paShowCooldownText
-        end,
-        enabled = function()
-            return CoTankTrackerDB.showPrivateAuras and CoTankTrackerDB.paShowCooldown
-        end,
-        onChange = function(checked)
-            CoTankTrackerDB.paShowCooldownText = checked
-            ns.ApplySettings()
-        end,
-    })
-    paCooldownTextCb:SetPoint("TOPLEFT", 0, y)
-    y = y - 20 - COMPONENT_GAP
-
-    local paCooldownTextScaleSlider = Components.Slider(content, {
-        label = "Text Scale",
-        min = 50,
-        max = 300,
-        step = 5,
-        suffix = "%",
-        get = function()
-            return CoTankTrackerDB.paCooldownTextScale
-        end,
-        enabled = function()
-            return CoTankTrackerDB.showPrivateAuras
-                and CoTankTrackerDB.paShowCooldown
-                and CoTankTrackerDB.paShowCooldownText
-        end,
-        tooltip = {
-            title = "Cooldown Text Scale",
-            desc = "Scale the cooldown text on private aura icons. Values above 1 make the text larger, below 1 make it smaller.",
-        },
-        onChange = function(val)
-            CoTankTrackerDB.paCooldownTextScale = val
-            ns.ApplySettings()
-        end,
-    })
-    paCooldownTextScaleSlider:SetPoint("TOPLEFT", 0, y)
-    y = y - 20 - SECTION_GAP
-
-    -- Positioning
-    local _, newYPos = ns.CreateSectionHeader(content, "Positioning", 0, y)
-    y = newYPos
-
-    local paAttachElementDd = Components.Dropdown(content, {
-        label = "Relative To",
-        width = 120,
-        options = {
-            { value = "frame", label = "Frame" },
-            { value = "debuffs", label = "Debuffs" },
-        },
-        get = function()
-            return CoTankTrackerDB.paAttachElement
-        end,
-        enabled = enabled,
-        tooltip = {
-            title = "Relative To",
-            desc = "Choose whether private auras anchor relative to the main frame or the debuffs element.",
-        },
-        onChange = function(val)
-            CoTankTrackerDB.paAttachElement = val
-            ns.ApplySettings()
-        end,
-    })
-    paAttachElementDd:SetPoint("TOPLEFT", 0, y)
-    y = y - 26 - COMPONENT_GAP
-
-    local paAnchorDd = Components.Dropdown(content, {
-        label = "Anchor",
-        width = 120,
-        options = ANCHOR_OPTIONS,
-        get = function()
-            return CoTankTrackerDB.paAnchor
-        end,
-        enabled = enabled,
-        onChange = function(val)
-            CoTankTrackerDB.paAnchor = val
-            ns.ApplySettings()
-        end,
-    })
-    paAnchorDd:SetPoint("TOPLEFT", 0, y)
-    y = y - 26 - COMPONENT_GAP
-
-    local paAttachDd = Components.Dropdown(content, {
-        label = "Attach To",
-        width = 120,
-        options = ANCHOR_OPTIONS,
-        get = function()
-            return CoTankTrackerDB.paAttachTo
-        end,
-        enabled = enabled,
-        onChange = function(val)
-            CoTankTrackerDB.paAttachTo = val
-            ns.ApplySettings()
-        end,
-    })
-    paAttachDd:SetPoint("TOPLEFT", 0, y)
-    y = y - 26 - COMPONENT_GAP
-
-    local paOffXSlider = Components.Slider(content, {
-        label = "Offset X",
-        min = -100,
-        max = 100,
-        step = 1,
-        suffix = "px",
-        get = function()
-            return CoTankTrackerDB.paOffsetX
-        end,
-        enabled = enabled,
-        onChange = function(val)
-            CoTankTrackerDB.paOffsetX = val
-            ns.ApplySettings()
-        end,
-    })
-    paOffXSlider:SetPoint("TOPLEFT", 0, y)
-    y = y - 20 - COMPONENT_GAP
-
-    local paOffYSlider = Components.Slider(content, {
-        label = "Offset Y",
-        min = -100,
-        max = 100,
-        step = 1,
-        suffix = "px",
-        get = function()
-            return CoTankTrackerDB.paOffsetY
-        end,
-        enabled = enabled,
-        onChange = function(val)
-            CoTankTrackerDB.paOffsetY = val
-            ns.ApplySettings()
-        end,
-    })
-    paOffYSlider:SetPoint("TOPLEFT", 0, y)
-    y = y - 20
-
-    content:SetHeight(math.abs(y) + 20)
-    return scrollFrame
-end
-
------------------------------------------------------------
 -- Tab: Defensives
 -----------------------------------------------------------
 local function BuildDefensivesTab(parent)
@@ -1388,7 +1084,6 @@ local PAGE_BUILDERS = {
     frame = BuildFrameTab,
     tanks = BuildMultipleTanksTab,
     defensives = BuildDefensivesTab,
-    privateauras = BuildPrivateAurasTab,
     debuffs = BuildDebuffsTab,
 }
 
@@ -1405,7 +1100,6 @@ local PAGE_GROUPS = {
         title = "Auras",
         pages = {
             { id = "defensives", title = "Defensives" },
-            { id = "privateauras", title = "Private Auras" },
             { id = "debuffs", title = "Debuffs" },
         },
     },

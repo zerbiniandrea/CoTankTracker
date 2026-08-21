@@ -24,38 +24,23 @@ local DEFAULTS = {
     texture = "Blizzard Raid Bar",
     font = "Friz Quadrata TT",
     iconBorders = true,
-    -- Debuffs
-    showDebuffs = false,
-    debuffSize = 32,
-    debuffNum = 2,
-    debuffMaxRows = 2,
+    -- Debuffs. These carry what private auras used to show: boss and role mechanics.
+    showDebuffs = true,
+    debuffSize = 36,
+    debuffNum = 4,
+    debuffMaxRows = 1,
     debuffSpacing = 2,
     debuffAnchor = "BOTTOMLEFT",
     debuffAttachTo = "TOPLEFT",
     debuffOffsetX = 0,
     debuffOffsetY = 2,
     debuffShowType = false,
-    debuffFilter = "raid_important", -- "all", "raid", "important", "raid_important", "player"
+    debuffFilter = "boss_role", -- "all", "raid", "important", "raid_important", "boss_role"
     debuffHidePermanent = false,
     debuffCountdownSize = 11,
     debuffStackSize = 11,
-    debuffStackOffsetX = -1,
+    debuffStackOffsetX = 1,
     debuffStackOffsetY = 1,
-    -- Private Auras
-    showPrivateAuras = true,
-    paSize = 36,
-    paMaxIcons = 4,
-    paMaxRows = 1,
-    paSpacing = 2,
-    paShowBorder = false,
-    paShowCooldown = true,
-    paShowCooldownText = true,
-    paCooldownTextScale = 100,
-    paAttachElement = "frame", -- "frame" or "debuffs"
-    paAnchor = "BOTTOMLEFT",
-    paAttachTo = "TOPLEFT",
-    paOffsetX = 0,
-    paOffsetY = 2,
     -- Defensives
     showDefensives = true,
     defSize = 36,
@@ -72,54 +57,6 @@ local DEFAULTS = {
     defStackOffsetY = 1,
 }
 ns.DEFAULTS = DEFAULTS
-
------------------------------------------------------------
--- Profiles (pre-configured layouts)
------------------------------------------------------------
-local PROFILES = {
-    {
-        name = "Private Auras Only",
-        settings = {
-            showDebuffs = false,
-            showDefensives = true,
-            showPrivateAuras = true,
-            paSize = 36,
-            paMaxIcons = 4,
-            paMaxRows = 1,
-            paAnchor = "BOTTOMLEFT",
-            paAttachTo = "TOPLEFT",
-            paOffsetX = 0,
-            paOffsetY = 2,
-        },
-    },
-    {
-        name = "Full",
-        settings = {
-            showDebuffs = true,
-            showDefensives = true,
-            showPrivateAuras = true,
-            paSize = 32,
-            paMaxIcons = 2,
-            paMaxRows = 2,
-            paAnchor = "BOTTOMRIGHT",
-            paAttachTo = "TOPRIGHT",
-            paOffsetX = 0,
-            paOffsetY = 2,
-        },
-    },
-}
-ns.PROFILES = PROFILES
-
-function ns.ApplyProfile(index)
-    local profile = PROFILES[index]
-    if not profile then
-        return
-    end
-    for k, v in pairs(profile.settings) do
-        CoTankTrackerDB[k] = v
-    end
-    ns.ApplySettings()
-end
 
 -- Mock aura textures (common tank-relevant spells)
 local MOCK_DEBUFF_ICONS = {
@@ -145,6 +82,44 @@ local DEBUFF_TYPE_COLORS = {
     { 0.6, 0.4, 0 }, -- disease
     { 0.8, 0.2, 0.2 }, -- none
 }
+
+-----------------------------------------------------------
+-- Secret-safe reads
+-----------------------------------------------------------
+-- Since 12.1 the unit identity, role, and aura APIs return secret values when the
+-- unit identity is restricted. A secret value is not nil. Arithmetic, comparison,
+-- table-key use, and a boolean test on a secret boolean all throw. Every such read
+-- goes through Plain first. An unreadable value reads as nil, and each caller decides
+-- what nil means.
+local issecret = issecretvalue or function(_)
+    return false
+end
+
+local function Plain(v)
+    if issecret(v) then
+        return nil
+    end
+    return v
+end
+
+-- Read one field of an aura struct. Returns nil when the struct or the field is secret.
+local function AuraField(data, key)
+    if data == nil or issecret(data) then
+        return nil
+    end
+    return Plain(data[key])
+end
+
+-- Compare two unit tokens. Returns true, false, or nil when the identities cannot be
+-- compared. oUF uses the same gate internally.
+local function SameUnit(unitA, unitB)
+    if C_Secrets and C_Secrets.CanCompareUnitTokens then
+        if not Plain(C_Secrets.CanCompareUnitTokens(unitA, unitB)) then
+            return nil
+        end
+    end
+    return Plain(UnitIsUnit(unitA, unitB))
+end
 
 -----------------------------------------------------------
 -- Cached state (event-driven invalidation)
@@ -174,9 +149,9 @@ local function IsPlayerTankSpec()
         return cachedIsTank
     end
     if PlayerUtil and PlayerUtil.IsPlayerEffectivelyTank then
-        cachedIsTank = PlayerUtil.IsPlayerEffectivelyTank()
+        cachedIsTank = Plain(PlayerUtil.IsPlayerEffectivelyTank()) or false
     else
-        cachedIsTank = UnitGroupRolesAssigned("player") == "TANK"
+        cachedIsTank = Plain(UnitGroupRolesAssigned("player")) == "TANK"
     end
     return cachedIsTank
 end
@@ -201,8 +176,13 @@ local function FindOtherTanks(out)
 
     for i = 1, cachedGroupSize do
         local unit = "raid" .. i
-        if UnitExists(unit) and not UnitIsUnit(unit, "player") and UnitIsConnected(unit) then
-            if UnitGroupRolesAssigned(unit) == "TANK" then
+        -- Identity reads fail closed: a unit that cannot be compared against the player
+        -- is skipped, so the player's own frame can never appear as a co-tank. Connection
+        -- reads fail open, so an unreadable connection state never drops a tank.
+        local isSelf = SameUnit(unit, "player")
+        local connected = Plain(UnitIsConnected(unit)) ~= false
+        if UnitExists(unit) and isSelf == false and connected then
+            if Plain(UnitGroupRolesAssigned(unit)) == "TANK" then
                 out[#out + 1] = unit
             end
         end
@@ -239,45 +219,557 @@ local function GrowthFromAttach(attachPoint)
 end
 
 -----------------------------------------------------------
--- Aura button styling
+-- Aura containers
 -----------------------------------------------------------
-local function PostCreateAuraButton(element, button)
+-- Blizzard owns aura data since 12.1. The engine parses, filters, sorts, and renders
+-- every icon through an AuraContainer, which oUF 14 exposes as frame:CreateAuras().
+-- The addon only declares groups by filter string and styles the buttons it gets back.
+--
+-- Two rules drive the code below:
+--   1. A button and every region parented to it can only be created inside the
+--      creation window (the engine's initializeFrame callback).
+--   2. Writes on a button, or on a region parented to it, are denied while auras are
+--      secret. Every such write goes through ButtonWrite, which queues a retry for the
+--      next time the restriction lifts.
+--
+-- All addon state for a container or a button lives in a weak-keyed side table, never
+-- as a field on the engine object.
+local auraButtons = setmetatable({}, { __mode = "k" }) -- [button] = { overlayHost, iconBorder, ... }
+local auraState = setmetatable({}, { __mode = "k" }) -- [element] = { kind, keys, styled }
+local restyleQueued = false
+
+-- Growth direction values for the engine flow layout (AnchorUtil.FlowDirection).
+local FLOW_DIR = { LEFT = -1, RIGHT = 1, UP = 1, DOWN = -1 }
+
+local DEBUFF_BORDER_TEXTURE = [[Interface\Buttons\UI-Debuff-Overlays]]
+
+-- Icon crop. Blizzard icon art carries a baked border, so every icon is inset by the
+-- same fraction. The mock preview uses this too, so the preview cannot drift from the
+-- real buttons.
+local ICON_CROP = 0.07
+
+-- Countdown text formatter, built once.
+--
+-- Blizzard's stock aura formatter is a SecondsFormatter, which always names its unit
+-- ("42 sec" at best) with no option to drop it. A NumericRuleFormatter takes raw format
+-- strings instead, so the text reads as a bare number under a minute and m:ss above it.
+-- Seconds round up, so an aura with 0.4 seconds left reads "1" and never "0".
+local durationFormatter
+
+local function DurationFormatter()
+    if durationFormatter == nil then
+        local ok, formatter = pcall(function()
+            local f = C_StringUtil.CreateNumericRuleFormatter()
+            f:SetBreakpoints({
+                {
+                    threshold = 0,
+                    format = "%d",
+                    step = 1,
+                    rounding = Enum.NumericRuleFormatRounding.Up,
+                },
+                {
+                    threshold = 60,
+                    format = "%d:%02d",
+                    components = {
+                        { div = 60, step = 1, rounding = Enum.NumericRuleFormatRounding.Down },
+                        { mod = 60, step = 1, rounding = Enum.NumericRuleFormatRounding.Down },
+                    },
+                },
+            })
+            return f
+        end)
+        durationFormatter = ok and formatter or false
+    end
+    return durationFormatter or nil
+end
+
+-- Wrap width for the engine flow layout. The 0.4 slack absorbs rounding so the last
+-- icon of a row never wraps on its own.
+local function RowLimit(perRow, size, spacing)
+    if perRow and perRow >= 2 then
+        return perRow * size + (perRow - 1) * spacing + 0.4
+    end
+    return size + 0.4
+end
+
+-- Protected write on an engine-owned button. A denial means auras are secret right
+-- now, so the write is retried on PLAYER_REGEN_ENABLED or ENCOUNTER_END.
+local function ButtonWrite(fn, ...)
+    if fn == nil then
+        return false
+    end
+    local ok = pcall(fn, ...)
+    if not ok then
+        restyleQueued = true
+    end
+    return ok
+end
+
+-- Engine sort rules. BigDefensive orders by another player's cast first, then by the
+-- longest remaining time. UnitFrameDebuff matches the Blizzard unit frame debuff order.
+-- A missing member leaves the oUF default (ExpirationOnly).
+local function SortMethod(name)
+    return AuraContainerSortMethod and AuraContainerSortMethod[name]
+end
+
+local function DispelTextureStyle()
+    local styles = Enum and Enum.CustomAuraButtonDispelTypeTextureStyle
+    -- PreserveAsset keeps our own border art and lets the engine tint it. Any other
+    -- style stamps Blizzard atlas art over it.
+    return styles and styles.PreserveAsset
+end
+
+-- Register or clear the dispel-type border. The engine drives the tint and the shown
+-- state once the texture is registered, so the addon never reads a dispel type.
+local function ApplyDispelBorder(kind, element, button, state)
+    local border = state.dispelBorder
+    if not border then
+        return
+    end
+    local want = (kind == "debuff") and CoTankTrackerDB.debuffShowType and true or false
+    if state.dispelOn == want then
+        return
+    end
+
+    if want then
+        local style = DispelTextureStyle()
+        if style == nil then
+            return
+        end
+        local colors = element.__owner and element.__owner.colors
+        local ok = ButtonWrite(button.AddDispelTypeTexture, button, border, {
+            style = style,
+            showWhenHarmful = true,
+            showWhenHelpful = false,
+            customDispelColorMap = colors and colors.dispel,
+        })
+        if ok then
+            state.dispelOn = true
+        end
+    elseif ButtonWrite(button.ClearDispelTypeTextures, button) then
+        border:Hide()
+        state.dispelOn = false
+    end
+end
+
+local function AuraStyleValues(kind)
     local db = CoTankTrackerDB
-    -- element.ctType is tagged at creation in StyleCoTank ("def" / "debuff"); identity
-    -- comparison against ns.coTankFrame.* would be wrong for stacked frames 2+.
-    local isDef = (element.ctType == "def")
-    local isDebuff = (element.ctType == "debuff")
-    local stackSize, stackOffX, stackOffY
-    if isDef then
-        stackSize = db.defStackSize
-        stackOffX = db.defStackOffsetX
-        stackOffY = db.defStackOffsetY
-    elseif isDebuff then
-        stackSize = db.debuffStackSize
-        stackOffX = db.debuffStackOffsetX
-        stackOffY = db.debuffStackOffsetY
-    else
-        stackSize = db.debuffStackSize
-        stackOffX = db.debuffStackOffsetX
-        stackOffY = db.debuffStackOffsetY
+    if kind == "def" then
+        return db.defSize, db.defCountdownSize, db.defStackSize, db.defStackOffsetX, db.defStackOffsetY
+    end
+    return db.debuffSize, db.debuffCountdownSize, db.debuffStackSize, db.debuffStackOffsetX, db.debuffStackOffsetY
+end
+
+-- Apply every configurable visual to one button. Runs once in the creation window and
+-- again after each settings change. Each write is stamped on success only, so an
+-- unchanged value costs nothing and a denied write is attempted again on the retry.
+local function StyleAuraButton(element, button)
+    local state = auraButtons[button]
+    local shared = auraState[element]
+    if not (state and shared) then
+        return
+    end
+    local db = CoTankTrackerDB
+    local size, cdSize, stackSize, stackX, stackY = AuraStyleValues(shared.kind)
+
+    if state.size ~= size and ButtonWrite(button.SetSize, button, size, size) then
+        state.size = size
     end
 
-    -- Restyle stack count
-    if button.Count then
-        button.Count:SetFont(STANDARD_TEXT_FONT, stackSize, "OUTLINE")
-        button.Count:ClearAllPoints()
-        button.Count:SetPoint("BOTTOMRIGHT", stackOffX, stackOffY)
+    local count = button.Count
+    local countStamp = stackSize .. ":" .. stackX .. ":" .. stackY
+    if count and state.countStamp ~= countStamp then
+        if ButtonWrite(count.SetFont, count, STANDARD_TEXT_FONT, stackSize, "OUTLINE") then
+            ButtonWrite(count.ClearAllPoints, count)
+            if ButtonWrite(count.SetPoint, count, "BOTTOMRIGHT", stackX, stackY) then
+                state.countStamp = countStamp
+            end
+        end
     end
 
-    -- Inner black border
-    local iconBorder = CreateFrame("Frame", nil, button, "BackdropTemplate")
+    local time = button.Time
+    if time and state.timeStamp ~= cdSize then
+        if ButtonWrite(time.SetFont, time, STANDARD_TEXT_FONT, cdSize, "OUTLINE") then
+            ButtonWrite(time.ClearAllPoints, time)
+            if ButtonWrite(time.SetPoint, time, "CENTER") then
+                state.timeStamp = cdSize
+            end
+        end
+    end
+
+    -- Upgrade the countdown text from the stock "42 sec" to bare seconds and m:ss.
+    -- oUF already bound the stock formatter, so a rejection here changes nothing. The
+    -- call stays protected for a second reason: an uncaught error inside
+    -- SetDurationText aborts the whole engine frame batch that created this button.
+    local formatter = DurationFormatter()
+    if time and formatter and not state.durationBound then
+        if ButtonWrite(button.SetDurationText, button, time, { textFormatter = formatter }) then
+            state.durationBound = true
+        end
+    end
+
+    -- Crop the baked border off the icon art. The engine only calls SetTexture on each
+    -- aura update, so texture coordinates set here survive every icon swap.
+    local icon = button.Icon
+    if icon and state.crop ~= ICON_CROP then
+        if ButtonWrite(icon.SetTexCoord, icon, ICON_CROP, 1 - ICON_CROP, ICON_CROP, 1 - ICON_CROP) then
+            state.crop = ICON_CROP
+        end
+    end
+
+    local wantBorder = db.iconBorders and true or false
+    if state.iconBorder and state.borderShown ~= wantBorder then
+        if ButtonWrite(state.iconBorder.SetShown, state.iconBorder, wantBorder) then
+            state.borderShown = wantBorder
+        end
+    end
+
+    ApplyDispelBorder(shared.kind, element, button, state)
+end
+
+local function RestyleAuraButtons(element)
+    local shared = element and auraState[element]
+    if not shared then
+        return
+    end
+    for button in pairs(shared.styled) do
+        StyleAuraButton(element, button)
+    end
+end
+
+-- Creation window. Everything the addon owns on a button must be built here.
+local function PostCreateAuraButton(element, button)
+    local shared = auraState[element]
+    if not shared then
+        return
+    end
+
+    local state = {}
+    auraButtons[button] = state
+    shared.styled[button] = true
+
+    -- Host frame for our own art, one level above the cooldown swipe. The mouse stays
+    -- with the button so tooltips keep working.
+    local host = CreateFrame("Frame", nil, button)
+    host:SetAllPoints()
+    host:EnableMouse(false)
+    if button.Cooldown then
+        host:SetFrameLevel(button.Cooldown:GetFrameLevel() + 1)
+    end
+    state.overlayHost = host
+
+    -- The addon draws its own duration text, so the Blizzard cooldown numbers stay off
+    -- and no icon can show the time twice.
+    if button.Cooldown then
+        ButtonWrite(button.Cooldown.SetHideCountdownNumbers, button.Cooldown, true)
+    end
+
+    local iconBorder = CreateFrame("Frame", nil, host, "BackdropTemplate")
     iconBorder:SetPoint("TOPLEFT", -1, 1)
     iconBorder:SetPoint("BOTTOMRIGHT", 1, -1)
     iconBorder:SetBackdrop({ edgeFile = [[Interface\Buttons\WHITE8X8]], edgeSize = 1 })
     iconBorder:SetBackdropBorderColor(0, 0, 0, 1)
-    iconBorder:SetFrameLevel(button:GetFrameLevel() + 2)
-    iconBorder:SetShown(db.iconBorders)
-    button.IconBorder_ = iconBorder
+    iconBorder:SetFrameLevel(host:GetFrameLevel() + 1)
+    state.iconBorder = iconBorder
+
+    -- Dispel border art is always created, because it can never be created later. The
+    -- engine only tints and shows it while it is registered.
+    local border = host:CreateTexture(nil, "OVERLAY")
+    border:SetPoint("TOPLEFT", -1, 1)
+    border:SetPoint("BOTTOMRIGHT", 1, -1)
+    border:SetTexture(DEBUFF_BORDER_TEXTURE)
+    border:SetTexCoord(0.296875, 0.5703125, 0, 0.515625)
+    border:Hide()
+    state.dispelBorder = border
+    state.dispelOn = false
+
+    StyleAuraButton(element, button)
+end
+
+-- Group definitions. A group's filter string and candidate filters are fixed at
+-- declaration, and groups are add-only on a container. Each configuration therefore
+-- becomes its own variant, declared the first time the user selects it. A retired
+-- variant stays declared and parks at zero icons.
+--
+-- WORKAROUND (12.1): C_UnitAuras.GetUnitAuraInstanceIDs applies the polarity of a
+-- filter string but ignores the classification tokens. Measured on a co-tank whose
+-- auras were readable: HELPFUL returned 3 ids, and HELPFUL|BIG_DEFENSIVE returned the
+-- same 3, while IsAuraFilteredOutByInstanceID reported every one of them as neither a
+-- big nor an external defensive. The aura container fetches through that list query and
+-- reports hasMatchedFilterString = true, so the group never re-checks its own filter
+-- string and displays every helpful aura. The UNIT_AURA path re-checks correctly, so
+-- the row self-corrects as auras change, which is why the fault looks intermittent.
+--
+-- Candidate filters are evaluated on BOTH paths, so a duration bound narrows the group
+-- where the filter string cannot. Every big and external defensive in the game runs
+-- well under a minute, while the noise this removes is permanent or very long: flasks,
+-- food, paladin auras, shapeshift forms. A max duration also excludes permanent auras
+-- outright (the engine treats duration == 0 as failing the bound). Short non-defensive
+-- buffs still leak, and they leak once per group. Remove this once the list query
+-- honours the tokens.
+local DEFENSIVE_MAX_DURATION = 60
+local DEFENSIVE_CANDIDATES = { maxDuration = DEFENSIVE_MAX_DURATION }
+
+local DEF_GROUPS = {
+    { variant = "bigdef", filter = "HELPFUL|BIG_DEFENSIVE", candidateFilters = DEFENSIVE_CANDIDATES },
+    -- Negated so an aura that carries both flags renders exactly once. A build that
+    -- rejects the negated token falls back to the plain filter.
+    {
+        variant = "extdef",
+        filter = "HELPFUL|EXTERNAL_DEFENSIVE|!BIG_DEFENSIVE",
+        fallback = "HELPFUL|EXTERNAL_DEFENSIVE",
+        candidateFilters = DEFENSIVE_CANDIDATES,
+    },
+}
+
+-- IMPORTANT is not a usable token here. Blizzard flags HELPFUL auras with it, so
+-- HARMFUL|IMPORTANT is an empty set. The friendly-unit equivalents are engine candidate
+-- filters, evaluated in AuraContainerUtil.DoesAuraPassCandidateFilters:
+--   isPriorityAura     - the curated priority-debuff list the raid frames use
+--   isBossOrRoleAura   - boss auras plus role auras (isTankRoleAura and its siblings),
+--                        which is where 12.1 delivers tank mechanics as readable auras
+local DEBUFF_FILTERS = {
+    all = "HARMFUL",
+    raid = "HARMFUL|RAID",
+    important = "HARMFUL",
+    raid_important = "HARMFUL|RAID",
+    boss_role = "HARMFUL",
+}
+local DEBUFF_CANDIDATES = {
+    important = { isPriorityAura = true },
+    raid_important = { isPriorityAura = true },
+    boss_role = { isBossOrRoleAura = true },
+}
+
+-- Group setters are engine methods on the container. They are guarded so that a build
+-- without one degrades instead of breaking the whole settings pass.
+local function SetGroupCount(element, key, count)
+    if element.SetAuraGroupMaxFrameCount then
+        element:SetAuraGroupMaxFrameCount(key, count)
+    end
+end
+
+local function SetGroupLayout(element, key, layout)
+    if element.SetAuraGroupLayout then
+        element:SetAuraGroupLayout(key, layout)
+    end
+end
+
+-- The groups an element must display right now. Every other declared variant parks.
+local function WantedGroups(kind, db, out)
+    for i = #out, 1, -1 do
+        out[i] = nil
+    end
+
+    if kind == "def" then
+        if db.showDefensives then
+            out[1] = DEF_GROUPS[1]
+            out[2] = DEF_GROUPS[2]
+        end
+        return out
+    end
+
+    if not db.showDebuffs then
+        return out
+    end
+
+    local preset = db.debuffFilter or "all"
+    local candidates
+    local preset_candidates = DEBUFF_CANDIDATES[preset]
+    if preset_candidates then
+        candidates = {}
+        for key, value in pairs(preset_candidates) do
+            candidates[key] = value
+        end
+    end
+    if db.debuffHidePermanent then
+        candidates = candidates or {}
+        -- The engine drops an aura when duration > maxDuration or duration == 0, so a
+        -- limit of math.huge excludes permanent auras only.
+        candidates.maxDuration = math.huge
+    end
+
+    out[1] = {
+        variant = preset .. (db.debuffHidePermanent and "|timed" or ""),
+        filter = DEBUFF_FILTERS[preset] or DEBUFF_FILTERS.all,
+        candidateFilters = candidates,
+    }
+    return out
+end
+
+-- Declare a group once. Returns its record, plus true when this call declared it.
+-- A record is { key = <engine group key>, filter = <filter string>, count = <last applied> }.
+local function EnsureGroup(element, spec, count, layout)
+    local keys = auraState[element].keys
+    local record = keys[spec.variant]
+    if record then
+        return record, false
+    end
+
+    -- Every declaration allocates a button batch, so a group that shows nothing is
+    -- never declared in the first place.
+    if count <= 0 then
+        return nil, false
+    end
+
+    local options = {
+        maxFrameCount = count,
+        candidateFilters = spec.candidateFilters,
+        layout = layout,
+    }
+    local filter = spec.filter
+    local ok, key = pcall(element.AddGroup, element, filter, options)
+    if not ok and spec.fallback then
+        filter = spec.fallback
+        ok, key = pcall(element.AddGroup, element, filter, options)
+    end
+    if not ok then
+        return nil, false
+    end
+
+    record = { key = key, filter = filter }
+    keys[spec.variant] = record
+    return record, true
+end
+
+local function AuraElementFor(frame, kind)
+    if kind == "def" then
+        return frame.Buffs
+    end
+    return frame.Debuffs
+end
+
+-- Every geometry value for one aura element, read from the shared settings.
+local function AuraGeometry(kind)
+    local db = CoTankTrackerDB
+    if kind == "def" then
+        return db.defSize,
+            db.defMaxIcons,
+            db.defMaxRows,
+            db.defSpacing,
+            db.defAnchor,
+            db.defAttachTo,
+            db.defOffsetX,
+            db.defOffsetY,
+            db.showDefensives
+    end
+    return db.debuffSize,
+        db.debuffNum,
+        db.debuffMaxRows,
+        db.debuffSpacing,
+        db.debuffAnchor,
+        db.debuffAttachTo,
+        db.debuffOffsetX,
+        db.debuffOffsetY,
+        db.showDebuffs
+end
+
+local function CreateAuraElement(frame, kind)
+    local size, perRow, _, spacing, anchor, attachTo, offsetX, offsetY = AuraGeometry(kind)
+    local initialAnchor, growthX, growthY = GrowthFromAttach(attachTo)
+
+    local element = frame:CreateAuras({
+        initialAnchor = initialAnchor,
+        growthX = growthX,
+        growthY = growthY,
+        layoutLimit = RowLimit(perRow, size, spacing),
+    })
+    auraState[element] = {
+        kind = kind,
+        keys = {},
+        styled = setmetatable({}, { __mode = "k" }),
+    }
+    element.size = size
+    element.elementSpacing = spacing
+    element.lineSpacing = spacing
+    element.showCount = true
+    element.showDuration = true
+    element.tooltipAnchor = "ANCHOR_BOTTOMRIGHT"
+    element.sortMethod = SortMethod(kind == "def" and "BigDefensive" or "UnitFrameDebuff")
+    element.PostCreateButton = PostCreateAuraButton
+    element:SetPoint(anchor, frame, attachTo, offsetX, offsetY)
+    return element
+end
+
+local wantedScratch = {}
+
+-- Apply all settings to one aura element: anchor, flow layout, group set, icon
+-- counts, and button visuals. Safe to call in combat: every container call belongs to
+-- a frame the addon owns, and every button call is protected.
+local function ApplyAuraElement(frame, kind)
+    local element = AuraElementFor(frame, kind)
+    if not (element and auraState[element]) then
+        return
+    end
+    local db = CoTankTrackerDB
+    local size, perRow, rows, spacing, anchor, attachTo, offsetX, offsetY, shown = AuraGeometry(kind)
+    local total = shown and (perRow * rows) or 0
+    local initialAnchor, growthX, growthY = GrowthFromAttach(attachTo)
+
+    element.size = size
+    element.elementSpacing = spacing
+    element.lineSpacing = spacing
+
+    element:ClearAllPoints()
+    element:SetPoint(anchor, frame, attachTo, offsetX, offsetY)
+    element:SetFlowLayoutAnchorPoint(initialAnchor)
+    element:SetFlowLayoutGrowthDirection(FLOW_DIR[growthX] or 1, FLOW_DIR[growthY] or 1)
+    element:SetFlowLayoutMaximumLineSize(RowLimit(perRow, size, spacing))
+
+    local wanted = WantedGroups(kind, db, wantedScratch)
+    local active = {}
+    local fresh = false
+    for i = 1, #wanted do
+        local spec = wanted[i]
+        local layout = {
+            elementWidth = size,
+            elementHeight = size,
+            elementSpacing = spacing,
+            lineSpacing = spacing,
+            layoutIndex = i,
+        }
+        local record, declared = EnsureGroup(element, spec, total, layout)
+        if record then
+            active[spec.variant] = true
+            fresh = fresh or declared
+            record.count = total
+            SetGroupCount(element, record.key, total)
+            SetGroupLayout(element, record.key, layout)
+        end
+    end
+
+    for variant, record in pairs(auraState[element].keys) do
+        if not active[variant] then
+            record.count = 0
+            SetGroupCount(element, record.key, 0)
+        end
+    end
+
+    -- A group declared on a live container needs one refresh to pick up the auras that
+    -- are already on the unit.
+    if fresh then
+        element:ForceUpdate()
+    end
+
+    RestyleAuraButtons(element)
+end
+ns.ApplyAuraElement = ApplyAuraElement
+
+-- Read-only view of the container state, for the /ctt debug dump.
+function ns.AuraElementState(element)
+    return element and auraState[element]
+end
+
+-- Re-apply button visuals that the engine denied while auras were secret.
+function ns.RetryAuraStyles()
+    if not restyleQueued or not ns.coTankFrames then
+        return
+    end
+    restyleQueued = false
+    for _, frame in ipairs(ns.coTankFrames) do
+        RestyleAuraButtons(frame.Buffs)
+        RestyleAuraButtons(frame.Debuffs)
+    end
 end
 
 -----------------------------------------------------------
@@ -316,79 +808,9 @@ local function StyleCoTank(frame)
     frame:Tag(name, "[name]")
     frame.nameText = name
 
-    -- Defensives (oUF Buffs element: BIG_DEFENSIVE + EXTERNAL_DEFENSIVE)
-    local defTotal = db.defMaxIcons * db.defMaxRows
-    local defensives = CreateFrame("Frame", nil, frame)
-    defensives:SetSize(db.defMaxIcons * (db.defSize + db.defSpacing), db.defMaxRows * (db.defSize + db.defSpacing))
-    defensives:SetPoint(db.defAnchor, frame, db.defAttachTo, db.defOffsetX, db.defOffsetY)
-    defensives.size = db.defSize
-    defensives.num = defTotal
-    defensives.spacing = db.defSpacing
-    defensives.initialAnchor, defensives.growthX, defensives.growthY = GrowthFromAttach(db.defAttachTo)
-    defensives.filter = "HELPFUL"
-    defensives.FilterAura = function(element, unit, data)
-        local id = data.auraInstanceID
-        if not C_UnitAuras.IsAuraFilteredOutByInstanceID(unit, id, "HELPFUL|BIG_DEFENSIVE") then
-            return true
-        end
-        if not C_UnitAuras.IsAuraFilteredOutByInstanceID(unit, id, "HELPFUL|EXTERNAL_DEFENSIVE") then
-            return true
-        end
-        return false
-    end
-    defensives.PostCreateButton = PostCreateAuraButton
-    defensives.ctType = "def"
-    frame.Buffs = defensives
-
-    -- Debuffs (always created, visibility controlled by ApplySettings)
-    local debuffs = CreateFrame("Frame", nil, frame)
-    debuffs:SetSize(
-        db.debuffNum * (db.debuffSize + db.debuffSpacing),
-        db.debuffMaxRows * (db.debuffSize + db.debuffSpacing)
-    )
-    debuffs:SetPoint(db.debuffAnchor, frame, db.debuffAttachTo, db.debuffOffsetX, db.debuffOffsetY)
-    debuffs.size = db.debuffSize
-    debuffs.num = db.debuffNum * db.debuffMaxRows
-    debuffs.spacing = db.debuffSpacing
-    debuffs.initialAnchor, debuffs.growthX, debuffs.growthY = GrowthFromAttach(db.debuffAttachTo)
-    debuffs.showDebuffType = db.debuffShowType
-    ns.ApplyDebuffFilter(debuffs, db)
-    debuffs.PostCreateButton = PostCreateAuraButton
-    debuffs.ctType = "debuff"
-    frame.Debuffs = debuffs
-end
-
------------------------------------------------------------
--- Filter logic
------------------------------------------------------------
-
--- Debuff filter: Blizzard native C_UnitAuras filter strings
-function ns.ApplyDebuffFilter(debuffs, db)
-    local filter = db.debuffFilter
-    if filter == "raid" then
-        debuffs.filter = "HARMFUL|RAID"
-    elseif filter == "important" then
-        debuffs.filter = "HARMFUL|IMPORTANT"
-    elseif filter == "raid_important" then
-        debuffs.filter = "HARMFUL|RAID|IMPORTANT"
-    else
-        debuffs.filter = "HARMFUL"
-    end
-
-    local hidePermanent = db.debuffHidePermanent
-
-    if hidePermanent then
-        debuffs.FilterAura = function(element, unit, data)
-            -- data.duration is a secret/tainted value; use the DurationObject API instead
-            local duration = C_UnitAuras.GetAuraDuration(unit, data.auraInstanceID)
-            if not duration then
-                return false
-            end
-            return true
-        end
-    else
-        debuffs.FilterAura = nil
-    end
+    -- Aura containers. Group declaration and icon counts are driven by ApplySettings.
+    frame.Buffs = CreateAuraElement(frame, "def")
+    frame.Debuffs = CreateAuraElement(frame, "debuff")
 end
 
 -----------------------------------------------------------
@@ -403,149 +825,6 @@ ns.MAX_FRAMES = MAX_FRAMES
 ns.IsCombatLocked = IsCombatLocked
 ns.IsPlayerTankSpec = IsPlayerTankSpec
 ns.FindOtherTanks = FindOtherTanks
-
------------------------------------------------------------
--- Private Aura anchors
------------------------------------------------------------
--- Private aura anchors are managed per oUF frame so that several co-tanks can each
--- display their own Blizzard private auras simultaneously. Each frame keeps its own
--- pool (frame.paAnchors) and tracks the unit it is currently anchoring (frame.paUnit).
-local function GetPARelativeFrame(frame)
-    local db = CoTankTrackerDB
-    if db.paAttachElement == "debuffs" and frame and frame.Debuffs then
-        return frame.Debuffs
-    end
-    return frame
-end
-
-local PA_GROWTH = {
-    RIGHT = { point = "LEFT", relPoint = "RIGHT", xMul = 1, yMul = 0 },
-    LEFT = { point = "RIGHT", relPoint = "LEFT", xMul = -1, yMul = 0 },
-    UP = { point = "BOTTOM", relPoint = "TOP", xMul = 0, yMul = 1 },
-    DOWN = { point = "TOP", relPoint = "BOTTOM", xMul = 0, yMul = -1 },
-}
-
-local function ClearPrivateAuraAnchors(frame)
-    if not frame then
-        return
-    end
-    local anchors = frame.paAnchors
-    if anchors then
-        for i = 1, #anchors do
-            local anchor = anchors[i]
-            if anchor.paId then
-                C_UnitAuras.RemovePrivateAuraAnchor(anchor.paId)
-                anchor.paId = nil
-            end
-            anchor:ClearAllPoints()
-            anchor:Hide()
-        end
-    end
-    frame.paUnit = nil
-end
-
-local function UpdatePrivateAuraAnchors(frame, unitToken)
-    if not frame then
-        return
-    end
-    local anchors = frame.paAnchors
-    if not anchors then
-        anchors = {}
-        frame.paAnchors = anchors
-    end
-
-    -- Remove existing anchors
-    for i = 1, #anchors do
-        local anchor = anchors[i]
-        if anchor.paId then
-            C_UnitAuras.RemovePrivateAuraAnchor(anchor.paId)
-            anchor.paId = nil
-        end
-        anchor:ClearAllPoints()
-        anchor:Hide()
-    end
-
-    local db = CoTankTrackerDB
-    if not db.showPrivateAuras or not unitToken then
-        frame.paUnit = nil
-        return
-    end
-
-    frame.paUnit = unitToken
-    local scale = math.max((db.paCooldownTextScale or 100) / 100, 0.01)
-    local size = db.paSize * (1 / scale)
-    local spacing = db.paSpacing * (1 / scale)
-    local perRow = db.paMaxIcons
-    local maxRows = db.paMaxRows
-    local totalIcons = perRow * maxRows
-    local _, growthX, growthY = GrowthFromAttach(db.paAttachTo)
-    local hGrowth = PA_GROWTH[growthX] or PA_GROWTH.RIGHT
-    local vGrowth = PA_GROWTH[growthY] or PA_GROWTH.UP
-    local showBorder = db.paShowBorder
-    local borderScale = showBorder and (size / 32 * 2) or -10000
-    local namePrefix = "CoTankTrackerPA" .. (frame.paIndex or 1) .. "_"
-
-    for i = 1, totalIcons do
-        local anchor = anchors[i]
-        if not anchor then
-            anchor = CreateFrame("Frame", namePrefix .. i, UIParent)
-            anchor:SetFrameStrata("MEDIUM")
-            anchor:SetFixedFrameStrata(true)
-            anchor:SetFrameLevel(1000)
-            anchor:SetFixedFrameLevel(true)
-            anchors[i] = anchor
-        end
-
-        anchor:SetSize(size, size)
-        anchor:SetScale(scale)
-        local col = (i - 1) % perRow
-        if i == 1 then
-            anchor:SetPoint(
-                db.paAnchor,
-                GetPARelativeFrame(frame),
-                db.paAttachTo,
-                db.paOffsetX / scale,
-                db.paOffsetY / scale
-            )
-        elseif col == 0 then
-            -- First icon of a new row: anchor relative to the first icon of the previous row
-            local rowStart = anchors[i - perRow]
-            anchor:SetPoint(vGrowth.point, rowStart, vGrowth.relPoint, spacing * vGrowth.xMul, spacing * vGrowth.yMul)
-        else
-            local prev = anchors[i - 1]
-            anchor:SetPoint(hGrowth.point, prev, hGrowth.relPoint, spacing * hGrowth.xMul, spacing * hGrowth.yMul)
-        end
-        anchor:Show()
-
-        anchor.paId = C_UnitAuras.AddPrivateAuraAnchor({
-            unitToken = unitToken,
-            auraIndex = i,
-            parent = anchor,
-            isContainer = false,
-            showCountdownFrame = db.paShowCooldown,
-            showCountdownNumbers = db.paShowCooldownText,
-            iconInfo = {
-                iconAnchor = {
-                    point = "CENTER",
-                    relativeTo = anchor,
-                    relativePoint = "CENTER",
-                    offsetX = 0,
-                    offsetY = 0,
-                },
-                iconWidth = size,
-                iconHeight = size,
-                borderScale = borderScale,
-            },
-        })
-    end
-
-    -- Hide excess anchors
-    for i = totalIcons + 1, #anchors do
-        anchors[i]:Hide()
-    end
-end
-ns.UpdatePrivateAuraAnchors = UpdatePrivateAuraAnchors
-ns.ClearPrivateAuraAnchors = ClearPrivateAuraAnchors
 
 -----------------------------------------------------------
 -- Frame state management
@@ -601,7 +880,6 @@ local function HideFramesFrom(startIdx)
         local f = frames[i]
         f:SetAttribute("unit", nil)
         f:Hide()
-        ClearPrivateAuraAnchors(f)
     end
 end
 
@@ -652,7 +930,6 @@ local function UpdateUnit()
                 local f = frames[shown]
                 f:SetAttribute("unit", unit)
                 f:Show()
-                UpdatePrivateAuraAnchors(f, unit)
             end
         end
     end
@@ -707,11 +984,6 @@ function ns.EnterTestMode()
         f:Show()
     end
     HideFramesFrom(previewCount + 1)
-    -- Private auras preview only on the anchor frame (mock overlays live there too).
-    UpdatePrivateAuraAnchors(frames[1], "player")
-    for i = 2, previewCount do
-        ClearPrivateAuraAnchors(frames[i])
-    end
 end
 
 function ns.ExitTestMode()
@@ -783,74 +1055,9 @@ local function ApplyFrameSettings(frame)
         frame.nameText:SetShown(db.showName)
     end
 
-    -- Defensives (Buffs element)
-    local buffs = frame.Buffs
-    if buffs then
-        local defTotal = db.defMaxIcons * db.defMaxRows
-        buffs.size = db.defSize
-        buffs.num = db.showDefensives and defTotal or 0
-        buffs.spacing = db.defSpacing
-        buffs.initialAnchor, buffs.growthX, buffs.growthY = GrowthFromAttach(db.defAttachTo)
-        buffs.needFullUpdate = true
-        buffs.anchoredButtons = 0
-        buffs:SetSize(db.defMaxIcons * (db.defSize + db.defSpacing), db.defMaxRows * (db.defSize + db.defSpacing))
-        buffs:ClearAllPoints()
-        buffs:SetPoint(db.defAnchor, frame, db.defAttachTo, db.defOffsetX, db.defOffsetY)
-        for i = 1, buffs.createdButtons or 0 do
-            local btn = buffs[i]
-            if btn then
-                btn:SetSize(db.defSize, db.defSize)
-                if btn.Count then
-                    btn.Count:SetFont(STANDARD_TEXT_FONT, db.defStackSize, "OUTLINE")
-                    btn.Count:ClearAllPoints()
-                    btn.Count:SetPoint("BOTTOMRIGHT", db.defStackOffsetX, db.defStackOffsetY)
-                end
-                if btn.Duration then
-                    btn.Duration:SetFont(STANDARD_TEXT_FONT, db.defCountdownSize, "OUTLINE")
-                end
-                if btn.IconBorder_ then
-                    btn.IconBorder_:SetShown(db.iconBorders)
-                end
-            end
-        end
-    end
-
-    -- Debuffs
-    local debuffs = frame.Debuffs
-    if debuffs then
-        debuffs.size = db.debuffSize
-        local debuffTotal = db.debuffNum * db.debuffMaxRows
-        debuffs.num = db.showDebuffs and debuffTotal or 0
-        debuffs.spacing = db.debuffSpacing
-        debuffs.initialAnchor, debuffs.growthX, debuffs.growthY = GrowthFromAttach(db.debuffAttachTo)
-        debuffs.showDebuffType = db.debuffShowType
-        ns.ApplyDebuffFilter(debuffs, db)
-        debuffs.needFullUpdate = true
-        debuffs.anchoredButtons = 0
-        debuffs:SetSize(
-            db.debuffNum * (db.debuffSize + db.debuffSpacing),
-            db.debuffMaxRows * (db.debuffSize + db.debuffSpacing)
-        )
-        debuffs:ClearAllPoints()
-        debuffs:SetPoint(db.debuffAnchor, frame, db.debuffAttachTo, db.debuffOffsetX, db.debuffOffsetY)
-        for i = 1, debuffs.createdButtons or 0 do
-            local btn = debuffs[i]
-            if btn then
-                btn:SetSize(db.debuffSize, db.debuffSize)
-                if btn.Count then
-                    btn.Count:SetFont(STANDARD_TEXT_FONT, db.debuffStackSize, "OUTLINE")
-                    btn.Count:ClearAllPoints()
-                    btn.Count:SetPoint("BOTTOMRIGHT", db.debuffStackOffsetX, db.debuffStackOffsetY)
-                end
-                if btn.Duration then
-                    btn.Duration:SetFont(STANDARD_TEXT_FONT, db.debuffCountdownSize, "OUTLINE")
-                end
-                if btn.IconBorder_ then
-                    btn.IconBorder_:SetShown(db.iconBorders)
-                end
-            end
-        end
-    end
+    -- Aura containers (defensives and debuffs)
+    ApplyAuraElement(frame, "def")
+    ApplyAuraElement(frame, "debuff")
 
     -- Force oUF to re-query and re-layout all elements
     if frame:IsShown() then
@@ -870,13 +1077,6 @@ function ns.ApplySettings()
     -- Re-anchor the stack (frame growth / spacing may have changed)
     ApplyStackAnchors()
 
-    -- Refresh private aura anchors for every frame currently tracking a unit
-    for _, frame in ipairs(ns.coTankFrames) do
-        if frame.paUnit then
-            UpdatePrivateAuraAnchors(frame, frame.paUnit)
-        end
-    end
-
     -- Update mocks if visible
     if ns.mockVisible then
         ns.UpdateMockAuras()
@@ -887,24 +1087,8 @@ end
 -- Mock auras for preview
 -----------------------------------------------------------
 local mockDebuffButtons = {}
-local mockPAButtons = {}
 local mockDefButtons = {}
-local mockDebuffContainer, mockPAContainer, mockDefContainer
-
--- Private aura mock icons (common boss mechanic spells)
-local MOCK_PA_ICONS = {
-    237274, -- Incendiary Brand (tank debuff)
-    135945, -- Rend / bleed
-    136124, -- Shadow Bolt (magic)
-    132365, -- Holy Shield
-}
--- Dispel-type border colors for mock PA icons
-local PA_BORDER_COLORS = {
-    { 0.2, 0.6, 1 }, -- magic
-    { 0.8, 0.2, 0.2 }, -- none / physical
-    { 0.6, 0, 1 }, -- curse
-    { 1, 0.82, 0 }, -- holy
-}
+local mockDebuffContainer, mockDefContainer
 
 local function CreateMockButton(parent, size, icon, debuffColor)
     local btn = CreateFrame("Frame", nil, parent)
@@ -913,7 +1097,7 @@ local function CreateMockButton(parent, size, icon, debuffColor)
     local tex = btn:CreateTexture(nil, "BORDER")
     tex:SetAllPoints()
     tex:SetTexture(icon)
-    tex:SetTexCoord(0.07, 0.93, 0.07, 0.93)
+    tex:SetTexCoord(ICON_CROP, 1 - ICON_CROP, ICON_CROP, 1 - ICON_CROP)
     btn.Icon = tex
 
     -- Cooldown swipe overlay (static partial fill)
@@ -1047,95 +1231,6 @@ function ns.UpdateMockAuras()
     LayoutMockButtons(mockDebuffButtons, mockDebuffContainer, db.debuffSize, db.debuffSpacing, cols, debuffInitAnchor)
     mockDebuffContainer:SetShown(debuffNum > 0)
 
-    -- Private Auras
-    local paPerRow = db.paMaxIcons
-    local paRows = db.paMaxRows
-    local paNum = db.showPrivateAuras and (paPerRow * paRows) or 0
-
-    if not mockPAContainer then
-        mockPAContainer = CreateFrame("Frame", nil, frame)
-        mockPAContainer:SetFrameStrata("MEDIUM")
-        mockPAContainer:SetFrameLevel(1000)
-    end
-
-    local paScale = math.max((db.paCooldownTextScale or 100) / 100, 0.01)
-    local paSize = db.paSize
-    local paSpacing = db.paSpacing
-    local paTotalWidth = paPerRow * (paSize + paSpacing)
-    local paTotalHeight = paRows * (paSize + paSpacing)
-    mockPAContainer:SetSize(math.max(1, paTotalWidth), math.max(1, paTotalHeight))
-    mockPAContainer:ClearAllPoints()
-    local paRelative = (db.paAttachElement == "debuffs" and mockDebuffContainer) and mockDebuffContainer or frame
-    mockPAContainer:SetPoint(db.paAnchor, paRelative, db.paAttachTo, db.paOffsetX, db.paOffsetY)
-
-    local _, paGrowthX, paGrowthY = GrowthFromAttach(db.paAttachTo)
-    local hGrowth = PA_GROWTH[paGrowthX] or PA_GROWTH.RIGHT
-    local vGrowth = PA_GROWTH[paGrowthY] or PA_GROWTH.UP
-
-    local MOCK_PA_DURATIONS = { 12, 14, 0, 6, 0 }
-    for i = 1, paNum do
-        local color = db.paShowBorder and PA_BORDER_COLORS[((i - 1) % #PA_BORDER_COLORS) + 1] or nil
-        if not mockPAButtons[i] then
-            local iconIdx = ((i - 1) % #MOCK_PA_ICONS) + 1
-            mockPAButtons[i] = CreateMockButton(mockPAContainer, paSize, MOCK_PA_ICONS[iconIdx], color)
-        end
-        local btn = mockPAButtons[i]
-        btn.Icon:SetTexture(MOCK_PA_ICONS[((i - 1) % #MOCK_PA_ICONS) + 1])
-        local scaledPASize = paSize * (1 / paScale)
-        btn:SetSize(scaledPASize, scaledPASize)
-        btn:SetScale(paScale)
-        if color then
-            btn.Border:SetVertexColor(color[1], color[2], color[3])
-            btn.Border:Show()
-        else
-            btn.Border:Hide()
-        end
-        -- Private auras are rendered by Blizzard — use CooldownFrameTemplate's
-        -- built-in countdown numbers to match the real appearance
-        btn.Duration:SetText("")
-        btn.Count:SetText("")
-        local dur = MOCK_PA_DURATIONS[((i - 1) % #MOCK_PA_DURATIONS) + 1]
-        if db.paShowCooldown and dur > 0 and btn.Cooldown then
-            btn.Cooldown:SetHideCountdownNumbers(not db.paShowCooldownText)
-            btn.Cooldown:SetCooldown(GetTime() - 4, dur)
-            btn.Cooldown:Show()
-        elseif btn.Cooldown then
-            btn.Cooldown:Hide()
-        end
-        btn:ClearAllPoints()
-        local scaledPASpacing = paSpacing * (1 / paScale)
-        local paCol = (i - 1) % paPerRow
-        if i == 1 then
-            btn:SetPoint(db.paAnchor, mockPAContainer, db.paAnchor, 0, 0)
-        elseif paCol == 0 then
-            local rowStart = mockPAButtons[i - paPerRow]
-            btn:SetPoint(
-                vGrowth.point,
-                rowStart,
-                vGrowth.relPoint,
-                scaledPASpacing * vGrowth.xMul,
-                scaledPASpacing * vGrowth.yMul
-            )
-        else
-            local prev = mockPAButtons[i - 1]
-            btn:SetPoint(
-                hGrowth.point,
-                prev,
-                hGrowth.relPoint,
-                scaledPASpacing * hGrowth.xMul,
-                scaledPASpacing * hGrowth.yMul
-            )
-        end
-        if btn.IconBorder_ then
-            btn.IconBorder_:SetShown(db.iconBorders)
-        end
-        btn:Show()
-    end
-    for i = paNum + 1, #mockPAButtons do
-        mockPAButtons[i]:Hide()
-    end
-    mockPAContainer:SetShown(paNum > 0)
-
     -- Defensives
     local defPerRow = db.defMaxIcons
     local defRows = db.defMaxRows
@@ -1204,7 +1299,6 @@ function ns.ShowMockAuras()
             frame.Debuffs:Hide()
         end
     end
-    -- Private aura anchors stay visible (they use Blizzard rendering)
     ns.UpdateMockAuras()
 end
 
@@ -1212,9 +1306,6 @@ function ns.HideMockAuras()
     ns.mockVisible = false
     if mockDebuffContainer then
         mockDebuffContainer:Hide()
-    end
-    if mockPAContainer then
-        mockPAContainer:Hide()
     end
     if mockDefContainer then
         mockDefContainer:Hide()
@@ -1311,6 +1402,191 @@ local function ParseShowArg(arg)
     return list
 end
 
+-- Chat treats "|" as an escape introducer, so "HARMFUL|RAID" prints as "HARMFULAID"
+-- unless every pipe is doubled.
+local function Esc(text)
+    return (tostring(text):gsub("|", "||"))
+end
+
+-- Every filter string the addon can hand to the engine. The dump validates each one,
+-- so a token that a build no longer accepts shows up immediately.
+local DEBUG_FILTERS = {
+    "HELPFUL|BIG_DEFENSIVE",
+    "HELPFUL|EXTERNAL_DEFENSIVE|!BIG_DEFENSIVE",
+    "HELPFUL|EXTERNAL_DEFENSIVE",
+    "HARMFUL",
+    "HARMFUL|RAID",
+}
+
+local function DumpAuraElement(label, element)
+    local state = ns.AuraElementState(element)
+    if not state then
+        print("    " .. label .. ": missing")
+        return
+    end
+    local unit = element.GetUnit and Plain(element:GetUnit())
+    print(string.format("    %s: shown=%s containerUnit=%s", label, tostring(Plain(element:IsShown())), tostring(unit)))
+    local any = false
+    for variant, record in pairs(state.keys) do
+        any = true
+        print(
+            string.format(
+                "      group %s: key=%s icons=%s filter=%s",
+                variant,
+                tostring(record.key),
+                tostring(record.count),
+                Esc(record.filter)
+            )
+        )
+    end
+    if not any then
+        print("      no groups declared")
+    end
+end
+
+-- How many auras pass each filter, asked through the exact API the aura container uses
+-- for its own groups. Equal counts for HELPFUL and HELPFUL|BIG_DEFENSIVE mean the
+-- classification token is not restricting, which is the whole question.
+local PROBE_FILTERS = {
+    "HELPFUL",
+    "HELPFUL|BIG_DEFENSIVE",
+    "HELPFUL|EXTERNAL_DEFENSIVE",
+    "HELPFUL|EXTERNAL_DEFENSIVE|!BIG_DEFENSIVE",
+    "HARMFUL",
+}
+
+local function CountAuras(unit, filter)
+    if not C_UnitAuras.GetUnitAuraInstanceIDs then
+        return nil, "api missing"
+    end
+    local ok, ids = pcall(C_UnitAuras.GetUnitAuraInstanceIDs, unit, filter)
+    if not ok then
+        return nil, "denied"
+    end
+    if ids == nil then
+        return nil, "no data"
+    end
+    if issecret(ids) then
+        return nil, "secret list"
+    end
+    -- The length operator throws on a secret container, so it is protected too.
+    local okLen, count = pcall(function()
+        return #ids
+    end)
+    if not okLen then
+        return nil, "secret list"
+    end
+    return count
+end
+
+local function PrintCountProbe(unit)
+    -- The player is measured too: aura data is always readable there, so a mismatch on
+    -- the player proves the list query ignores the token regardless of secrecy.
+    local units = { "player" }
+    if unit then
+        units[2] = unit
+    else
+        print("  count probe: no co-tank shown")
+    end
+
+    for _, probeUnit in ipairs(units) do
+        print("  count probe for " .. probeUnit .. ":")
+        for _, filter in ipairs(PROBE_FILTERS) do
+            local count, reason = CountAuras(probeUnit, filter)
+            print(string.format("    %s -> %s", Esc(filter), tostring(count or reason)))
+        end
+    end
+end
+
+-- Ask the engine how it classifies each helpful aura on a unit. This is the check that
+-- tells us whether a buff belongs in the defensives row. Enumeration throws in a
+-- restricted context, so run it out of combat. Every read is secret-safe.
+local function PrintAuraProbe(unit)
+    if not unit then
+        print("  aura probe: no co-tank shown")
+        return
+    end
+    print("  aura probe for " .. unit .. " (HELPFUL, out of combat only):")
+
+    local shown = 0
+    for i = 1, 40 do
+        local ok, data = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HELPFUL")
+        if not ok then
+            print("    enumeration denied at index " .. i .. " (auras are secret right now)")
+            return
+        end
+        if data == nil then
+            break
+        end
+
+        local id = AuraField(data, "auraInstanceID")
+        local name = AuraField(data, "name")
+        if id == nil then
+            print(string.format("    %d: secret entry", i))
+        else
+            local bigOk, big = pcall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, id, "HELPFUL|BIG_DEFENSIVE")
+            local extOk, ext = pcall(C_UnitAuras.IsAuraFilteredOutByInstanceID, unit, id, "HELPFUL|EXTERNAL_DEFENSIVE")
+            local function Verdict(callOk, filteredOut)
+                if not callOk then
+                    return "denied"
+                end
+                local plain = Plain(filteredOut)
+                if plain == nil then
+                    return "secret"
+                end
+                return tostring(plain == false)
+            end
+            print(
+                string.format(
+                    "    %s: big=%s external=%s",
+                    tostring(name or id),
+                    Verdict(bigOk, big),
+                    Verdict(extOk, ext)
+                )
+            )
+        end
+        shown = shown + 1
+    end
+
+    if shown == 0 then
+        print("    no helpful auras returned")
+    end
+end
+
+-- Dump what the addon configured. Aura data is never read, only the values the addon
+-- itself handed to the engine plus the unit each container is pointed at.
+local function PrintDebug()
+    PrintMsg("debug:")
+    local restricted = C_Secrets and C_Secrets.HasSecretRestrictions and C_Secrets.HasSecretRestrictions()
+    print(string.format("  oUF=%s secretRestrictions=%s", tostring(oUF.version), tostring(restricted)))
+
+    for _, filter in ipairs(DEBUG_FILTERS) do
+        if AuraUtil and AuraUtil.IsValidFilterString then
+            local ok, reason = AuraUtil.IsValidFilterString(filter)
+            print(string.format("  filter %s -> valid=%s %s", Esc(filter), tostring(ok), Esc(reason or "")))
+        end
+    end
+
+    for i, frame in ipairs(ns.coTankFrames or {}) do
+        print(
+            string.format(
+                "  frame %d: shown=%s attrUnit=%s oufUnit=%s",
+                i,
+                tostring(Plain(frame:IsShown())),
+                tostring(frame:GetAttribute("unit")),
+                tostring(frame.__unit)
+            )
+        )
+        DumpAuraElement("defensives", frame.Buffs)
+        DumpAuraElement("debuffs", frame.Debuffs)
+    end
+
+    local frames = ns.coTankFrames
+    local probeUnit = frames and frames[1] and frames[1]:IsShown() and frames[1]:GetAttribute("unit")
+    PrintCountProbe(probeUnit)
+    PrintAuraProbe(probeUnit)
+end
+
 local slashTanks = {}
 local function PrintTankList()
     local tanks = FindOtherTanks(slashTanks)
@@ -1325,8 +1601,8 @@ local function PrintTankList()
     end
     PrintMsg(#tanks .. " co-tank(s) detected:")
     for i, unit in ipairs(tanks) do
-        local name = UnitName(unit) or unit
-        local _, class = UnitClass(unit)
+        local name = Plain(UnitName(unit)) or unit
+        local class = Plain(select(2, UnitClass(unit)))
         local color = class and RAID_CLASS_COLORS[class]
         if color then
             name = "|c" .. color.colorStr .. name .. "|r"
@@ -1355,11 +1631,14 @@ SlashCmdList["COTANKTRACKER"] = function(msg)
             ns.Components.RefreshAll()
         end
         PrintTankList()
+    elseif cmd == "debug" then
+        PrintDebug()
     elseif cmd == "help" then
         PrintMsg("commands:")
         print("  |cffffcc00/ctt|r \226\128\148 open options")
         print("  |cffffcc00/ctt tanks|r \226\128\148 list detected co-tanks")
         print("  |cffffcc00/ctt show 1,2|r \226\128\148 show co-tanks 1 and 2 (or |cffffcc00all|r)")
+        print("  |cffffcc00/ctt debug|r \226\128\148 dump frame, container and filter state")
     else
         PrintMsg("unknown command \226\128\148 type |cffffcc00/ctt help|r.")
     end
@@ -1368,7 +1647,7 @@ end
 -----------------------------------------------------------
 -- Defaults & migrations
 -----------------------------------------------------------
-local DB_VERSION = 2
+local DB_VERSION = 3
 
 local function DeepCopyDefaults(src, dst)
     for k, v in pairs(src) do
@@ -1378,10 +1657,64 @@ local function DeepCopyDefaults(src, dst)
     end
 end
 
+-- Private aura keys removed in DB_VERSION 3.
+local PRIVATE_AURA_KEYS = {
+    "showPrivateAuras",
+    "paSize",
+    "paMaxIcons",
+    "paMaxRows",
+    "paSpacing",
+    "paShowBorder",
+    "paShowCooldown",
+    "paShowCooldownText",
+    "paCooldownTextScale",
+    "paAttachElement",
+    "paAnchor",
+    "paAttachTo",
+    "paOffsetX",
+    "paOffsetY",
+}
+
 local migrations = {
     [2] = function()
         -- showInParty was removed: addon now only activates inside raid instances.
         CoTankTrackerDB.showInParty = nil
+    end,
+    [3] = function()
+        local db = CoTankTrackerDB
+        -- Private aura support was removed. 12.1 renders private auras through aura
+        -- containers, so the debuff row shows those mechanics now and the separate
+        -- anchor display had nothing left to add.
+        --
+        -- Idempotent: the keys are cleared at the end, so a second run sees nil and
+        -- does nothing.
+        local hadPrivateAuras = db.showPrivateAuras
+        if hadPrivateAuras == nil then
+            return
+        end
+
+        if hadPrivateAuras then
+            -- The debuff row takes over the display: same mechanics, same place, same
+            -- geometry. A row that was anchored TO the debuffs keeps its own position,
+            -- because adopting that anchor would offset the debuffs from themselves.
+            db.showDebuffs = true
+            db.debuffFilter = "boss_role"
+            db.debuffHidePermanent = false
+            db.debuffSize = db.paSize or db.debuffSize
+            db.debuffNum = db.paMaxIcons or db.debuffNum
+            db.debuffMaxRows = db.paMaxRows or db.debuffMaxRows
+            db.debuffSpacing = db.paSpacing or db.debuffSpacing
+            if db.paAttachElement ~= "debuffs" then
+                db.debuffAnchor = db.paAnchor or db.debuffAnchor
+                db.debuffAttachTo = db.paAttachTo or db.debuffAttachTo
+                db.debuffOffsetX = db.paOffsetX or db.debuffOffsetX
+                db.debuffOffsetY = db.paOffsetY or db.debuffOffsetY
+            end
+        end
+
+        for i = 1, #PRIVATE_AURA_KEYS do
+            db[PRIVATE_AURA_KEYS[i]] = nil
+        end
     end,
 }
 
@@ -1421,7 +1754,6 @@ local function OnLogin()
     for i = 1, MAX_FRAMES do
         local name = (i == 1) and "CoTankTrackerFrame" or ("CoTankTrackerFrame" .. i)
         local frame = oUF:Spawn("player", name)
-        frame.paIndex = i
         UnregisterUnitWatch(frame)
         frame:Hide()
         ns.coTankFrames[i] = frame
@@ -1434,9 +1766,6 @@ local function OnLogin()
 
     -- Only the anchor frame is draggable; it carries the rest of the stack with it.
     MakeDraggable(ns.coTankFrame)
-    if db.showPrivateAuras and db.paShowBorder then
-        C_UnitAuras.TriggerPrivateAuraShowDispelType(true)
-    end
     ns.ApplySettings()
     UpdateUnit()
 end
@@ -1455,6 +1784,7 @@ events:RegisterEvent("PLAYER_ENTERING_WORLD")
 events:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 events:RegisterEvent("PLAYER_REGEN_ENABLED")
 events:RegisterEvent("PLAYER_REGEN_DISABLED")
+events:RegisterEvent("ENCOUNTER_END")
 
 events:SetScript("OnEvent", function(_, event)
     if event == "PLAYER_LOGIN" then
@@ -1466,11 +1796,19 @@ events:SetScript("OnEvent", function(_, event)
         return
     end
 
+    -- Both events mark the end of a context where auras are secret, so any button
+    -- write the engine denied is retried here.
     if event == "PLAYER_REGEN_ENABLED" then
+        ns.RetryAuraStyles()
         if pendingUpdate then
             pendingUpdate = false
             UpdateUnit()
         end
+        return
+    end
+
+    if event == "ENCOUNTER_END" then
+        ns.RetryAuraStyles()
         return
     end
 

@@ -7,26 +7,18 @@ Minimal oUF co-tank unit frame for World of Warcraft
 
 Automatically detects the other tank in your raid and displays a compact unit frame with health, name, buffs, and debuffs. No configuration needed — just install and go.
 
-## Profiles
+## Layout
 
-Two built-in profiles are available from the options panel. Switch between them anytime in `/ctt` under the **Profiles** section.
+Defensive cooldowns below the health bar, boss and tank mechanics above it. That is the default, and there is nothing to pick: **Reset All to Defaults** in `/ctt` restores it.
 
-**Private Auras Only** (default) — Private auras above the health bar, externals below, no debuffs
-
-![Private Auras Only](https://github.com/zerbiniandrea/CoTankTracker/blob/main/assets/preview_private_auras_only.png?raw=true)
-
-**Full** — Debuffs, defensive cooldowns, and private auras all enabled
-
-![Full](https://github.com/zerbiniandrea/CoTankTracker/blob/main/assets/preview_full.png?raw=true)
+Private aura support was removed. Patch 12.1 renders private auras through aura containers, so boss and role mechanics now arrive as ordinary debuffs. The debuff row shows them with the **Boss + Role** filter, which is the default.
 
 ## Features
 
 - Automatically finds the other tank in your raid or party
 - Health bar with class-colored name
-- Debuffs with filtering (all, raid-relevant, important, player-applied)
+- Debuffs with filtering (boss and role mechanics, raid-relevant, important, all)
 - Defensive cooldown tracking
-- Private aura support
-- Built-in profiles for quick setup
 - Fully configurable size, position, fonts, textures, and aura layout
 - Test mode for previewing the frame with mock auras
 

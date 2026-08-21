@@ -24,6 +24,8 @@ globals = {
 
 read_globals = {
     -- WoW API
+    "C_Secrets",
+    "C_StringUtil",
     "C_Timer",
     "C_UnitAuras",
     "ChatFrame1",
@@ -37,6 +39,7 @@ read_globals = {
     "IsInInstance",
     "IsInRaid",
     "IsMouseButtonDown",
+    "issecretvalue",
     "UnitClass",
     "UnitExists",
     "UnitGroupRolesAssigned",
@@ -47,7 +50,10 @@ read_globals = {
     "tinsert",
 
     -- WoW UI globals
+    "AuraContainerSortMethod",
+    "AuraUtil",
     "DEBUFF_TYPE_COLORS",
+    "Enum",
     "RAID_CLASS_COLORS",
     "GameTooltip",
     "STANDARD_TEXT_FONT",
