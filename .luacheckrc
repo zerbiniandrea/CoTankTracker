@@ -29,6 +29,7 @@ read_globals = {
     "C_Timer",
     "C_UnitAuras",
     "ChatFrame1",
+    "CreateFont",
     "CreateFrame",
     "GetCursorPosition",
     "LibStub",

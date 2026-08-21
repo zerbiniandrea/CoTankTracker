@@ -190,7 +190,7 @@ local function BuildGeneralTab(parent)
     local y = 0
 
     -- Name
-    local _, newYName = ns.CreateSectionHeader(content, "Name", 0, y)
+    local _, newYName = ns.CreateSectionHeader(content, "Text", 0, y)
     y = newYName
 
     local showNameCb = Components.Checkbox(content, {
@@ -211,11 +211,12 @@ local function BuildGeneralTab(parent)
         label = "Font",
         width = 160,
         options = GetLSMOptions("font"),
+        tooltip = {
+            title = "Font",
+            desc = "Typeface for every piece of text the addon draws: the name, aura stack counts, and aura countdowns.",
+        },
         get = function()
             return CoTankTrackerDB.font
-        end,
-        enabled = function()
-            return CoTankTrackerDB.showName
         end,
         onChange = function(val)
             CoTankTrackerDB.font = val

@@ -352,6 +352,15 @@ local function ApplyDispelBorder(kind, element, button, state)
     end
 end
 
+-- Font roles per aura kind. Counts and countdowns are sized independently, so each gets
+-- its own shared object.
+local function AuraFontRoles(kind)
+    if kind == "def" then
+        return "defCount", "defDuration"
+    end
+    return "debuffCount", "debuffDuration"
+end
+
 local function AuraStyleValues(kind)
     local db = CoTankTrackerDB
     if kind == "def" then
@@ -376,10 +385,23 @@ local function StyleAuraButton(element, button)
         state.size = size
     end
 
+    -- Text faces and sizes ride shared Font objects, so a settings change reaches these
+    -- fontstrings even while auras are secret. Only the binding and the anchor are writes
+    -- on the button, and the binding happens once.
+    local countRole, timeRole = AuraFontRoles(shared.kind)
+    ns.Fonts.SetSize(countRole, stackSize)
+    ns.Fonts.SetSize(timeRole, cdSize)
+
     local count = button.Count
-    local countStamp = stackSize .. ":" .. stackX .. ":" .. stackY
-    if count and state.countStamp ~= countStamp then
-        if ButtonWrite(count.SetFont, count, STANDARD_TEXT_FONT, stackSize, "OUTLINE") then
+    if count then
+        if not state.countBound then
+            state.countBound = ns.Fonts.Bind(count, countRole)
+            if not state.countBound then
+                restyleQueued = true
+            end
+        end
+        local countStamp = stackX .. ":" .. stackY
+        if state.countStamp ~= countStamp then
             ButtonWrite(count.ClearAllPoints, count)
             if ButtonWrite(count.SetPoint, count, "BOTTOMRIGHT", stackX, stackY) then
                 state.countStamp = countStamp
@@ -388,12 +410,16 @@ local function StyleAuraButton(element, button)
     end
 
     local time = button.Time
-    if time and state.timeStamp ~= cdSize then
-        if ButtonWrite(time.SetFont, time, STANDARD_TEXT_FONT, cdSize, "OUTLINE") then
-            ButtonWrite(time.ClearAllPoints, time)
-            if ButtonWrite(time.SetPoint, time, "CENTER") then
-                state.timeStamp = cdSize
+    if time then
+        if not state.timeBound then
+            state.timeBound = ns.Fonts.Bind(time, timeRole)
+            if not state.timeBound then
+                restyleQueued = true
             end
+        end
+        if not state.timeAnchored then
+            ButtonWrite(time.ClearAllPoints, time)
+            state.timeAnchored = ButtonWrite(time.SetPoint, time, "CENTER")
         end
     end
 
@@ -804,7 +830,8 @@ local function StyleCoTank(frame)
     -- Name text
     local name = health:CreateFontString(nil, "OVERLAY")
     name:SetPoint("CENTER")
-    name:SetFont(LSM:Fetch("font", db.font) or STANDARD_TEXT_FONT, db.nameFontSize, "OUTLINE")
+    ns.Fonts.SetSize("name", db.nameFontSize)
+    ns.Fonts.Bind(name, "name")
     frame:Tag(name, "[name]")
     frame.nameText = name
 
@@ -1048,10 +1075,11 @@ local function ApplyFrameSettings(frame)
         frame.Health:SetStatusBarTexture(LSM:Fetch("statusbar", db.texture) or [[Interface\Buttons\WHITE8X8]])
     end
 
-    -- Name
-    local fontPath = LSM:Fetch("font", db.font) or STANDARD_TEXT_FONT
+    -- Name. The face comes from the shared object, so only the size and the shown state
+    -- are set here.
     if frame.nameText then
-        frame.nameText:SetFont(fontPath, db.nameFontSize, "OUTLINE")
+        ns.Fonts.SetSize("name", db.nameFontSize)
+        ns.Fonts.Bind(frame.nameText, "name")
         frame.nameText:SetShown(db.showName)
     end
 
@@ -1069,6 +1097,9 @@ function ns.ApplySettings()
     if not ns.coTankFrames then
         return
     end
+
+    -- Picks up a font change, and re-asserts any object the client reverted.
+    ns.Fonts.Resolve()
 
     for _, frame in ipairs(ns.coTankFrames) do
         ApplyFrameSettings(frame)
@@ -1132,13 +1163,13 @@ local function CreateMockButton(parent, size, icon, debuffColor)
     iconBorder:SetFrameLevel(btn:GetFrameLevel() + 2)
     btn.IconBorder_ = iconBorder
 
+    -- The preview binds the same Font objects as the real buttons, so the two can never
+    -- show different text. The caller binds the roles for its own aura kind.
     local count = btn:CreateFontString(nil, "OVERLAY")
-    count:SetFont(STANDARD_TEXT_FONT, 11, "OUTLINE")
     count:SetPoint("BOTTOMRIGHT", -1, 1)
     btn.Count = count
 
     local duration = btn:CreateFontString(nil, "OVERLAY")
-    duration:SetFont(STANDARD_TEXT_FONT, 11, "OUTLINE")
     duration:SetPoint("CENTER", btn, "CENTER", 0, 0)
     duration:SetTextColor(1, 1, 1)
     btn.Duration = duration
@@ -1170,6 +1201,11 @@ function ns.UpdateMockAuras()
     end
     local db = CoTankTrackerDB
     local frame = ns.coTankFrame
+
+    ns.Fonts.SetSize("debuffCount", db.debuffStackSize)
+    ns.Fonts.SetSize("debuffDuration", db.debuffCountdownSize)
+    ns.Fonts.SetSize("defCount", db.defStackSize)
+    ns.Fonts.SetSize("defDuration", db.defCountdownSize)
 
     -- Ensure containers exist
     if not mockDebuffContainer then
@@ -1206,12 +1242,12 @@ function ns.UpdateMockAuras()
         else
             btn.Border:Hide()
         end
-        btn.Count:SetFont(STANDARD_TEXT_FONT, db.debuffStackSize, "OUTLINE")
+        ns.Fonts.Bind(btn.Count, "debuffCount")
         btn.Count:ClearAllPoints()
         btn.Count:SetPoint("BOTTOMRIGHT", db.debuffStackOffsetX, db.debuffStackOffsetY)
         btn.Count:SetText(MOCK_DEBUFF_STACKS[((i - 1) % #MOCK_DEBUFF_STACKS) + 1])
         local dur = MOCK_DEBUFF_DURATIONS[((i - 1) % #MOCK_DEBUFF_DURATIONS) + 1]
-        btn.Duration:SetFont(STANDARD_TEXT_FONT, db.debuffCountdownSize, "OUTLINE")
+        ns.Fonts.Bind(btn.Duration, "debuffDuration")
         btn.Duration:SetText(dur)
         if dur ~= "" and btn.Cooldown then
             btn.Cooldown:SetCooldown(GetTime() - 5, 15)
@@ -1260,10 +1296,10 @@ function ns.UpdateMockAuras()
         btn.Icon:SetTexture(MOCK_DEFENSIVE_ICONS[((i - 1) % #MOCK_DEFENSIVE_ICONS) + 1])
         btn:SetSize(defSize, defSize)
         btn.Border:Hide()
-        btn.Count:SetFont(STANDARD_TEXT_FONT, db.defStackSize, "OUTLINE")
+        ns.Fonts.Bind(btn.Count, "defCount")
         btn.Count:SetText(MOCK_DEF_STACKS[((i - 1) % #MOCK_DEF_STACKS) + 1])
         local dur = MOCK_DEF_DURATIONS[((i - 1) % #MOCK_DEF_DURATIONS) + 1]
-        btn.Duration:SetFont(STANDARD_TEXT_FONT, db.defCountdownSize, "OUTLINE")
+        ns.Fonts.Bind(btn.Duration, "defDuration")
         btn.Duration:SetText(dur)
         if dur ~= "" and btn.Cooldown then
             btn.Cooldown:SetCooldown(GetTime() - 3, 10)
@@ -1559,6 +1595,9 @@ local function PrintDebug()
     PrintMsg("debug:")
     local restricted = C_Secrets and C_Secrets.HasSecretRestrictions and C_Secrets.HasSecretRestrictions()
     print(string.format("  oUF=%s secretRestrictions=%s", tostring(oUF.version), tostring(restricted)))
+
+    local fontPath, healthyRoles, totalRoles = ns.Fonts.Status()
+    print(string.format("  font=%s applied=%d/%d", tostring(fontPath), healthyRoles, totalRoles))
 
     for _, filter in ipairs(DEBUG_FILTERS) do
         if AuraUtil and AuraUtil.IsValidFilterString then
