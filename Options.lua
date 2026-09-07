@@ -189,6 +189,27 @@ local function BuildGeneralTab(parent)
     local scrollFrame, content = CreateScrollContent(parent)
     local y = 0
 
+    -- Visibility
+    local _, newYVis = ns.CreateSectionHeader(content, "Visibility", 0, y)
+    y = newYVis
+
+    local requireTankCb = Components.Checkbox(content, {
+        label = "Only show when I'm a tank",
+        get = function()
+            return CoTankTrackerDB.requireTankSpec
+        end,
+        tooltip = {
+            title = "Only When Tank",
+            desc = "When enabled, frames only appear if you are a tank. Disable to track co-tanks as a healer or DPS.",
+        },
+        onChange = function(checked)
+            CoTankTrackerDB.requireTankSpec = checked
+            ns.UpdateUnit()
+        end,
+    })
+    requireTankCb:SetPoint("TOPLEFT", 0, y)
+    y = y - 20 - SECTION_GAP
+
     -- Name
     local _, newYName = ns.CreateSectionHeader(content, "Text", 0, y)
     y = newYName
@@ -389,23 +410,6 @@ local function BuildMultipleTanksTab(parent)
     -- Detection
     local _, newYDetect = ns.CreateSectionHeader(content, "Detection", 0, y)
     y = newYDetect
-
-    local requireTankCb = Components.Checkbox(content, {
-        label = "Only show when I'm a tank",
-        get = function()
-            return CoTankTrackerDB.requireTankSpec
-        end,
-        tooltip = {
-            title = "Only When Tank",
-            desc = "When enabled, frames only appear if you are a tank. Disable to track co-tanks as a healer or DPS.",
-        },
-        onChange = function(checked)
-            CoTankTrackerDB.requireTankSpec = checked
-            ns.UpdateUnit()
-        end,
-    })
-    requireTankCb:SetPoint("TOPLEFT", 0, y)
-    y = y - 20 - COMPONENT_GAP
 
     local tankNoticeCb = Components.Checkbox(content, {
         label = "Notify when more co-tanks detected",
