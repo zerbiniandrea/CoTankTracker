@@ -485,9 +485,12 @@ local function PostCreateAuraButton(element, button)
     state.overlayHost = host
 
     -- The addon draws its own duration text, so the Blizzard cooldown numbers stay off
-    -- and no icon can show the time twice.
+    -- and no icon can show the time twice. The swipe drains clockwise like every other
+    -- aura display (SetReverse), and the bright edge line stays off.
     if button.Cooldown then
         ButtonWrite(button.Cooldown.SetHideCountdownNumbers, button.Cooldown, true)
+        ButtonWrite(button.Cooldown.SetReverse, button.Cooldown, true)
+        ButtonWrite(button.Cooldown.SetDrawEdge, button.Cooldown, false)
     end
 
     local iconBorder = CreateFrame("Frame", nil, host, "BackdropTemplate")
@@ -1134,7 +1137,8 @@ local function CreateMockButton(parent, size, icon, debuffColor)
     -- Cooldown swipe overlay (static partial fill)
     local cooldown = CreateFrame("Cooldown", nil, btn, "CooldownFrameTemplate")
     cooldown:SetAllPoints()
-    cooldown:SetDrawEdge(true)
+    cooldown:SetReverse(true)
+    cooldown:SetDrawEdge(false)
     cooldown:SetDrawSwipe(true)
     cooldown:SetHideCountdownNumbers(true)
     cooldown:SetSwipeColor(0, 0, 0, 0.6)
