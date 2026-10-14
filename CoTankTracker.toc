@@ -1,4 +1,4 @@
-## Interface: 120100
+## Interface: 120105
 # WOW_INTERFACE_TARGETS: standard
 ## Title: CoTankTracker
 ## Notes: Minimal oUF co-tank unit frame — shows the other tank in your raid
